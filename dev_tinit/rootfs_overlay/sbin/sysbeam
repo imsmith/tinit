@@ -1,7 +1,8 @@
 #!/bin/sh
-# /sbin/sysbeam: a role name in argv[1] (plus role args). Runs the Elixir harness.
+# /sbin/sysbeam: role in argv[1], role index in argv[2]. Starts the sysbeam release.
 # stdout goes straight to the console so a role's logs do not get captured by the
 # parent BEAM's port. stdin is left alone: a child role halts when it hits EOF,
 # which is how it notices its parent BEAM died.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
-exec /usr/lib/elixir/bin/elixir /usr/lib/sysbeam/sysbeam.exs "$@" >/dev/console 2>&1
+export SYSBEAM_ROLE="$1" SYSBEAM_INDEX="${2:-0}" RELEASE_DISTRIBUTION=none
+exec /usr/lib/sysbeam/bin/sysbeam start >/dev/console 2>&1
