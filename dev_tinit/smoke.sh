@@ -1,5 +1,5 @@
 #!/bin/bash
-# Smoke test: boot the image, use the worker shell, exit it, confirm tinit respawned it.
+# Smoke test: boot the image, use the worker shell, exit it, confirm easysec respawned it.
 # Drives QEMU's serial console through a FIFO. Run from the repo root: make test
 set -u
 cd "$(dirname "$0")/.."
@@ -15,6 +15,6 @@ printf 'echo RESPAWNED SHELL PID $$\n' >&3; sleep 1
 printf 'poweroff -f\n' >&3; sleep 3
 exec 3>&-; rm -f "$IN"
 sed -i 's/\r$//' "$LOG"
-grep -q "signaling tinit" "$LOG" && grep -q "^3$" "$LOG" && grep -q "RESPAWNED SHELL PID" "$LOG" && grep -q "Power down" "$LOG" \
-  && { echo "PASS: ltd signaled, 3 BEAMs, worker respawned, clean poweroff"; rm -f "$LOG"; } \
+grep -q "config reconciliation loop active" "$LOG" && grep -q "^4$" "$LOG" && grep -q "worker 0 exited 0, respawning" "$LOG" && grep -q "RESPAWNED SHELL PID" "$LOG" && grep -q "Power down" "$LOG" \
+  && { echo "PASS: chain up, 4 BEAMs (ltd, easysec, 2 workers), worker respawned, clean poweroff"; rm -f "$LOG"; } \
   || { echo "FAIL"; cat "$LOG"; exit 1; }

@@ -1,4 +1,7 @@
 #!/bin/sh
-# /sbin/sysbeam: tinit execs this with the role in argv[1]. Runs the Elixir harness.
+# /sbin/sysbeam: a role name in argv[1] (plus role args). Runs the Elixir harness.
+# stdout goes straight to the console so a role's logs do not get captured by the
+# parent BEAM's port. stdin is left alone: a child role halts when it hits EOF,
+# which is how it notices its parent BEAM died.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
-exec /usr/lib/elixir/bin/elixir /usr/lib/sysbeam/sysbeam.exs "$1" </dev/null
+exec /usr/lib/elixir/bin/elixir /usr/lib/sysbeam/sysbeam.exs "$@" >/dev/console 2>&1

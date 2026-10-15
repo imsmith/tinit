@@ -2,26 +2,31 @@
 #
 # test_sysbeam.exs - Elixir test harness for tinit
 #
+# Topology:  tinit -> sysbeam(ltd) -> sysbeam(easysec) -> sysbeam(worker 0..n)
+#
 # Proves:
 #   1. The BEAM starts and runs under tinit as a child process.
-#   2. Role dispatch via argv[0] / command line args works.
+#   2. Role dispatch via argv works.
 #   3. Ltd can mount virtual filesystems via System.cmd.
-#   4. Ltd can signal tinit with SIGUSR1.
-#   5. Multiple BEAM instances can discover each other and form a cluster.
+#   4. Each tier starts the next as a port, and respawns it when it exits.
+#   5. A child tier halts when its parent BEAM dies (stdin EOF on the port pipe).
 #   6. GenServer processes can hold state and respond to calls.
 #
 # Usage from tinit:
-#   execv("/sbin/sysbeam", {"ltd", NULL})     -- but sysbeam is this script
+#   execv("/sbin/sysbeam", {"ltd", "ltd", NULL})
 #
 # For manual testing without tinit:
 #   elixir test_sysbeam.exs ltd
 #   elixir test_sysbeam.exs easysec
-#   elixir test_sysbeam.exs worker
+#   elixir test_sysbeam.exs worker 0
 
 defmodule SysbeamTest do
   @moduledoc """
   Minimal test harness proving the BEAM can fill each sysbeam role.
   """
+
+  @workers 2
+  @sysbeam "/sbin/sysbeam"
 
   # -----------------------------------------------------------
   # Fake GenServer for ltd: holds system config as a map in ETS
@@ -121,9 +126,8 @@ defmodule SysbeamTest do
     config = ConfigStore.dump()
     log("ltd", "config materialized: #{inspect(config)}")
 
-    # Signal tinit that mounts are ready
-    log("ltd", "signaling tinit (SIGUSR1 -> PID 1)")
-    System.cmd("kill", ["-USR1", "1"], stderr_to_stdout: true)
+    # Mounts are ready: start the next tier and keep it alive
+    supervise("easysec", [])
 
     log("ltd", "running -- config reconciliation loop active")
     hold()
@@ -145,6 +149,9 @@ defmodule SysbeamTest do
     policies = PolicyStore.policies()
     log("easysec", "policies loaded: #{inspect(policies)}")
 
+    # Start the worker tier under the policy umbrella
+    for i <- 0..(@workers - 1), do: supervise("worker", [Integer.to_string(i)])
+
     log("easysec", "running -- policy enforcement active")
     hold()
   end
@@ -152,13 +159,13 @@ defmodule SysbeamTest do
   # -----------------------------------------------------------
   # Role: worker
   # -----------------------------------------------------------
-  def run_worker do
-    log("worker", "starting BEAM instance")
+  def run_worker(index) do
+    log("worker", "starting BEAM instance (worker #{index})")
 
     # Simulate starting supervision trees by spawning monitored processes
     devices = spawn_and_monitor("devices")
     people = spawn_and_monitor("people")
-    programs = spawn_and_monitor("programs")
+    programs = spawn_and_monitor("programs", index == "0")
     networks = spawn_and_monitor("networks")
 
     log("worker", "supervision trees started: #{inspect([devices, people, programs, networks])}")
@@ -166,10 +173,10 @@ defmodule SysbeamTest do
     hold()
   end
 
-  defp spawn_and_monitor(name) do
+  defp spawn_and_monitor(name, shell? \\ false) do
     pid = spawn(fn ->
       log("worker", "  supervisor:#{name} running (pid #{inspect(self())})")
-      if name == "programs", do: demo_shell(), else: hold()
+      if shell?, do: demo_shell(), else: hold()
     end)
 
     Process.monitor(pid)
@@ -177,16 +184,43 @@ defmodule SysbeamTest do
     {name, pid}
   end
 
-  # Demo: the programs tree runs an interactive shell on the console.
-  # When it exits, the BEAM halts and tinit respawns the worker role.
+  # Demo: worker 0's programs tree runs an interactive shell on the console.
+  # When it exits, this BEAM halts and easysec respawns the worker.
   defp demo_shell do
-    log("worker", "  programs tree: interactive shell on ttyS0 (exit -> tinit respawns worker)")
+    log("worker", "  programs tree: interactive shell on ttyS0 (exit -> easysec respawns worker)")
     # The port child is already a session leader, so busybox setsid would fork and
     # return at once. The trailing ":" stops ash exec'ing setsid in place, so it
     # runs as a non-leader child, keeps the session in-process, and sh waits on it.
     {out, status} = System.cmd("sh", ["-c", "setsid -c sh </dev/ttyS0 >/dev/ttyS0 2>&1; :"])
     log("worker", "  shell exited #{status} #{String.trim(out)}")
     System.halt(0)
+  end
+
+  # -----------------------------------------------------------
+  # Tier supervision: run the next role as a port, respawn on exit
+  # -----------------------------------------------------------
+  defp supervise(role, args) do
+    spawn_link(fn -> supervise_loop(role, args) end)
+  end
+
+  defp supervise_loop(role, args) do
+    port = Port.open({:spawn_executable, @sysbeam}, [:exit_status, args: [role | args]])
+    receive do
+      {^port, {:exit_status, status}} ->
+        log(role, "#{Enum.join([role | args], " ")} exited #{status}, respawning in 1s")
+        Process.sleep(1000)
+        supervise_loop(role, args)
+    end
+  end
+
+  # A child tier's stdin is the pipe from its parent's port. EOF means the
+  # parent BEAM is gone, so halt and let the grandparent's respawn rebuild us.
+  defp watch_parent do
+    spawn(fn ->
+      IO.read(:stdio, :eof)
+      log("main", "parent gone (stdin EOF), halting")
+      System.halt(0)
+    end)
   end
 
   # -----------------------------------------------------------
@@ -223,22 +257,24 @@ defmodule SysbeamTest do
   def main do
     # In real sysbeam, the role comes from argv[0] via the execv trick.
     # For testing, we accept it as a command line argument.
-    role =
+    {role, args} =
       case System.argv() do
-        [role | _] -> role
+        [role | args] -> {role, args}
         [] ->
-          IO.puts("[sysbeam] usage: test_sysbeam.exs <ltd|easysec|worker|cluster>")
+          IO.puts("[sysbeam] usage: test_sysbeam.exs <ltd|easysec|worker N|cluster>")
           System.halt(1)
       end
 
     log(role, "BEAM VM started (pid #{System.pid()})")
+    if role != "ltd", do: watch_parent()
 
-    case role do
-      "ltd"     -> run_ltd()
-      "easysec" -> run_easysec()
-      "worker"  -> run_worker()
-      "cluster" -> test_cluster()
-      other     ->
+    case {role, args} do
+      {"ltd", _}         -> run_ltd()
+      {"easysec", _}     -> run_easysec()
+      {"worker", [i | _]} -> run_worker(i)
+      {"worker", []}     -> run_worker("0")
+      {"cluster", _}     -> test_cluster()
+      {other, _} ->
         log(other, "unknown role")
         System.halt(1)
     end

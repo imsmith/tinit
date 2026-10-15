@@ -1,59 +1,57 @@
 #!/bin/sh
 #
-# fake-sysbeam.sh - test harness for tinit
+# fake-sysbeam.sh - shell stand-in for sysbeam, for testing tinit without a BEAM.
 #
-# tinit calls execv("/sbin/sysbeam") with argv[0] set to the role name,
-# and argv[1] set to the role name too (a #! script only sees argv[1]).
+#   tinit -> sysbeam ltd -> sysbeam easysec -> sysbeam worker 0..n
+#
+# The role is argv[1] (tinit also sets argv[0], but a #! script never sees it).
+# Each tier runs the next in a respawn loop.
 #
 # Install:  copy this to /sbin/sysbeam on the initramfs, chmod +x.
 
 ROLE=${1:-$(basename "$0")}
+WORKERS=2
 
 log() {
     echo "[sysbeam:${ROLE}] $1"
 }
 
+respawn() {
+    while :; do "$0" "$@"; sleep 1; done
+}
+
 case "$ROLE" in
     ltd)
         log "starting"
-
-        # Phase 1: virtual mounts (ltd's first job)
-        log "mounting /proc"
-        mount -t proc proc /proc 2>/dev/null
-
-        log "mounting /sys"
-        mount -t sysfs sys /sys 2>/dev/null
-
-        log "mounting /dev"
-        mount -t devtmpfs dev /dev 2>/dev/null
-
-        log "mounting /tmp"
-        mount -t tmpfs tmp /tmp 2>/dev/null
-
-        log "mounting /run"
-        mount -t tmpfs run /run 2>/dev/null
-
-        # Phase 2: signal tinit that mounts are ready
-        log "signaling tinit (SIGUSR1 -> PID 1)"
-        kill -USR1 1
-
-        # Phase 3: stay alive, pretend to manage config
-        log "running (config reconciliation loop)"
-        exec sleep infinity
+        for fs in proc:/proc sysfs:/sys devtmpfs:/dev tmpfs:/tmp tmpfs:/run; do
+            log "mounting ${fs#*:}"
+            mount -t "${fs%%:*}" "${fs%%:*}" "${fs#*:}" 2>/dev/null
+        done
+        log "running (config reconciliation loop); supervising easysec"
+        respawn easysec
         ;;
 
     easysec)
         log "starting"
         log "loading security policy (pretend)"
-        log "running (policy enforcement loop)"
-        exec sleep infinity
+        i=0
+        while [ "$i" -lt "$WORKERS" ]; do
+            respawn worker "$i" &
+            i=$((i + 1))
+        done
+        log "running (policy enforcement loop); supervising $WORKERS workers"
+        wait
         ;;
 
     worker)
-        log "starting"
+        log "starting worker $2"
         log "starting supervision trees (pretend)"
-        log "programs tree: interactive shell on ttyS0 (exit -> tinit respawns worker)"
-        exec setsid /bin/sh -c 'exec /bin/sh </dev/ttyS0 >/dev/ttyS0 2>&1'
+        if [ "$2" = 0 ]; then
+            log "programs tree: interactive shell on ttyS0 (exit -> easysec respawns worker 0)"
+            setsid -c sh </dev/ttyS0 >/dev/ttyS0 2>&1
+        else
+            exec sleep infinity
+        fi
         ;;
 
     *)
