@@ -1,13 +1,24 @@
 # tinit
 
-A PID 1 that does only what PID 1 must: fork one child and reap zombies.
-Everything else lives below it.
+A PID 1 that does only what PID 1 must: spawn, reap, respawn.
+Everything else is sysbeam, one BEAM release started three times under
+different roles.
 
 ```text
-PID 1  tinit   reaper, respawns ltd            dev_tinit/tinit.c
-PID 2  ltd     stage-1 boot sequencer          dev_tinit/rootfs_overlay/sbin/ltd
-       easysec policy-governed process manager (not yet)
+PID 1  tinit            dev_tinit/tinit.c
+  |-- sysbeam ltd       mounts /proc /sys /dev /tmp /run, then SIGUSR1 -> PID 1,
+  |                     then holds system config as a live materialized view
+  |-- sysbeam easysec   security policy (SELinux, cgroups, capabilities)
+  `-- sysbeam worker    supervision trees: devices, people, programs, networks
 ```
+
+The role is passed as argv[0] and argv[1]. tinit starts easysec and worker only
+after ltd signals that the filesystems are up, and respawns any role that dies.
+
+The initramfs currently ships `dev_tinit/rootfs_overlay/sbin/sysbeam`, a shell
+fake of the protocol whose worker role is an interactive shell.
+`sysbeam/test_sysbeam.exs` is the Elixir proof of the same roles, not yet
+packaged into the image.
 
 ## Demo
 
@@ -22,8 +33,8 @@ make run                                  # Ctrl-a x to quit QEMU
 Inside the VM:
 
 ```sh
-ps -o pid,ppid,comm   # tinit is PID 1, ltd forked the shell
-exit                  # ltd dies, tinit reaps it and respawns it a second later
+ps -o pid,ppid,args   # tinit is PID 1 with ltd, easysec and the worker shell under it
+exit                  # worker dies, tinit reaps it and respawns it a second later
 ```
 
 ## Layout
