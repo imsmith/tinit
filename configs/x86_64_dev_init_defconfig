@@ -1,30 +1,21 @@
-# Target Architecture
-BR2_i386_64=y
-
-# Toolchain (Using internal toolchain for portability)
-BR2_arm_cortexa7a_vfpv3=n
-BR2_USE_ Musl=y
-BR2_arm_cortexa7a_vfpv3=n
+# tinit dev target: x86_64, musl, initramfs, QEMU. Paths are relative to buildroot/.
+BR2_x86_64=y
 BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
+BR2_GLOBAL_PATCH_DIR="board/qemu/patches"
 
-# System Configuration
-BR2_INIT_BUSYBOX=y
-# This is where your magic happens:
-BR2_ROOTFS_OVERLAY="/path/to/your/init_overlay"
-
-# Filesystem (Using cpio for Initramfs - fastest for dev)
-# Using initramfs means you don't need to deal with partitions/disk images
+BR2_INIT_NONE=y
+BR2_ROOTFS_OVERLAY="../dev_tinit/rootfs_overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="../dev_tinit/post-build.sh"
 BR2_TARGET_ROOTFS_CPIO=y
+BR2_TARGET_ROOTFS_CPIO_GZIP=y
+# BR2_TARGET_ROOTFS_TAR is not set
 
-# Kernel
 BR2_LINUX_KERNEL=y
-BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="configs/defconfig"
-BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG_CONTENT=y
-BR2_LINUX_KERNEL_CUSTOM_CONFIG_CONTENT="
-# Minimal kernel config for QEMU
-CONFIG_64BIT=y
-CONFIG_X86_64=y
-CONFIG_PIXELS=n
-CONFIG_BLK_DEV_SD=y
-CONFIG_EXT4_FS=y
-"
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18.7"
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_18=y
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="board/qemu/x86_64/linux.config"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../dev_tinit/linux.fragment"
+BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
