@@ -15,10 +15,10 @@ PID 1  tinit            dev_tinit/tinit.c
 The role is passed as argv[0] and argv[1]. tinit starts easysec and worker only
 after ltd signals that the filesystems are up, and respawns any role that dies.
 
-The initramfs currently ships `dev_tinit/rootfs_overlay/sbin/sysbeam`, a shell
-fake of the protocol whose worker role is an interactive shell.
-`sysbeam/test_sysbeam.exs` is the Elixir proof of the same roles, not yet
-packaged into the image.
+sysbeam is `sysbeam/test_sysbeam.exs`, run by Elixir 1.19.6 on the OTP 26 that
+Buildroot ships. Each role is its own BEAM VM. The worker's programs tree runs
+the demo shell. `sysbeam/fake-sysbeam.sh` is the same protocol in shell, kept
+for testing tinit without a BEAM.
 
 ## Demo
 
@@ -26,15 +26,16 @@ Build once inside the `buildroot` distrobox (Buildroot wants its own toolchain
 deps; the host stays clean), then boot on the host with QEMU.
 
 ```bash
-distrobox enter buildroot -- make build   # ~30-60 min first time, output/ is cached
+distrobox enter buildroot -- make build   # ~40 min first time (OTP), output/ is cached
 make run                                  # Ctrl-a x to quit QEMU
+make test                                 # scripted boot, respawn and poweroff check
 ```
 
 Inside the VM:
 
 ```sh
-ps -o pid,ppid,args   # tinit is PID 1 with ltd, easysec and the worker shell under it
-exit                  # worker dies, tinit reaps it and respawns it a second later
+ps -o pid,ppid,args   # tinit is PID 1 with three beam.smp under it; the shell is under worker
+exit                  # worker halts, tinit reaps it and respawns it a second later
 ```
 
 ## Layout
@@ -42,7 +43,10 @@ exit                  # worker dies, tinit reaps it and respawns it a second lat
 - `configs/x86_64_dev_init_defconfig`: Buildroot config. x86_64, musl, gzip
   initramfs, QEMU kernel config from upstream plus `dev_tinit/linux.fragment`.
 - `dev_tinit/post-build.sh`: compiles `tinit.c` with the Buildroot toolchain
-  and installs it as `/sbin/init`, replacing BusyBox init.
+  and installs it as `/sbin/init`, unzips the pinned Elixir release into
+  `/usr/lib/elixir`, and installs the harness as `/usr/lib/sysbeam/sysbeam.exs`.
+- `dev_tinit/rootfs_overlay/sbin/sysbeam`: wrapper that runs the harness with
+  stdin on `/dev/null` so the BEAMs do not eat console input.
 - `buildroot/`: upstream Buildroot 2026.02.3 as a submodule. Clone with
   `git clone --recurse-submodules`.
 

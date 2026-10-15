@@ -19,3 +19,6 @@ BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
 BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="board/qemu/x86_64/linux.config"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../dev_tinit/linux.fragment"
 BR2_LINUX_KERNEL_NEEDS_HOST_LIBELF=y
+
+# sysbeam runtime: OTP 26 from Buildroot; Elixir is unzipped by post-build.sh
+BR2_PACKAGE_ERLANG=y

@@ -169,12 +169,24 @@ defmodule SysbeamTest do
   defp spawn_and_monitor(name) do
     pid = spawn(fn ->
       log("worker", "  supervisor:#{name} running (pid #{inspect(self())})")
-      hold()
+      if name == "programs", do: demo_shell(), else: hold()
     end)
 
     Process.monitor(pid)
     log("worker", "  supervisor:#{name} started and monitored")
     {name, pid}
+  end
+
+  # Demo: the programs tree runs an interactive shell on the console.
+  # When it exits, the BEAM halts and tinit respawns the worker role.
+  defp demo_shell do
+    log("worker", "  programs tree: interactive shell on ttyS0 (exit -> tinit respawns worker)")
+    # The port child is already a session leader, so busybox setsid would fork and
+    # return at once. The trailing ":" stops ash exec'ing setsid in place, so it
+    # runs as a non-leader child, keeps the session in-process, and sh waits on it.
+    {out, status} = System.cmd("sh", ["-c", "setsid -c sh </dev/ttyS0 >/dev/ttyS0 2>&1; :"])
+    log("worker", "  shell exited #{status} #{String.trim(out)}")
+    System.halt(0)
   end
 
   # -----------------------------------------------------------
