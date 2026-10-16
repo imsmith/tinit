@@ -89,6 +89,9 @@ without a BEAM.
 
 ## Demo
 
+`make test` first asserts the image has no busybox binary, applet symlink or
+`/bin/sh`, then boots it and drives IEx over the serial console.
+
 Build once inside the `buildroot` distrobox (Buildroot wants its own toolchain
 deps; the host stays clean), then boot on the host with QEMU.
 

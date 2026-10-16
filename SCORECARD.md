@@ -23,7 +23,8 @@ tracks how far it still reaches.
 | --- | --- | --- | --- |
 | tinit -> ltd -> easysec -> worker 0..n | one BEAM program, role from argv[1] | done | 365c18f, smoke: 4 BEAMs |
 | Each tier runs and respawns the next | `Sysbeam.Tier` ports | done | smoke: `worker 0 exited 0, respawning` |
-| Dead parent takes its subtree with it | `Sysbeam.ParentWatch` halts on stdin EOF | done | 365c18f |
+| Dead parent takes its subtree with it | sbexec sets PR_SET_PDEATHSIG; erl_child_setup exits with its BEAM | done | `sbexec.c`, smoke: respawn |
+| No shell on the boot path | tinit execs sbexec, sbexec execs beam.smp; `/init` is a symlink to tinit | done | `sbexec_check.sh`, smoke |
 | Respawn that survives a crash loop | fixed 1 s backoff, no detection | partial | `tier.ex` ponytail note |
 | Ships as a release on the image's OTP | mix release, `include_erts: false`, OTP 26 | done | a87f910, cb9cfca |
 
@@ -31,7 +32,7 @@ tracks how far it still reaches.
 
 | Want | Have | Status | Evidence |
 | --- | --- | --- | --- |
-| Mounts and filesystems | proc, sysfs, cgroup2, devtmpfs, tmpfs x2 | done | `Sysbeam.Ltd.Mounts` |
+| Mounts and filesystems | proc, sysfs, cgroup2, devtmpfs, tmpfs x2 via `Sysbeam.Sys.mount` NIF | done | `Sysbeam.Ltd.Mounts`, `c_src/sysbeam_sys.c` |
 | Hostname | reconciled both ways | done | e977438, smoke: drift and apply |
 | sysctl | reconciled both ways | done | e977438, smoke: `FWD=0` |
 | Kernel params and modules | kernel built without modules | none | |
@@ -59,32 +60,32 @@ tracks how far it still reaches.
 | Want | Have | Status | Evidence |
 | --- | --- | --- | --- |
 | Everything that runs comes through easysec | workers yes; ltd and easysec themselves are ungoverned | partial | 8aa539b |
-| Capabilities | bounding set dropped via capsh before exec, no_new_privs | done | smoke: `CapBnd 0000000000401000`, `hostname` refused |
-| cgroups | v2 leaf per worker, pids controller only | partial | smoke: `pids.max 128`, `FORKS_BLOCKED` |
+| Capabilities | bounding set dropped by sbexec via prctl before exec, no_new_privs | done | smoke: `CAPBND=0000000000401000`, `MOUNT={:error, :eperm}` |
+| cgroups | v2 leaf per worker, joined by sbexec before exec; pids controller only | partial | smoke: `PIDSMAX=128`, `FORKS_BLOCKED` |
 | SELinux | kernel has no LSM | none | |
 | Policy from a declarative store | hardcoded in `Sysbeam.Easysec.Policy` | none | |
 | Policy granularity below "process" (applet, syscall, device) | | none | |
-| Four supervision trees: devices, people, programs, networks | named placeholders; programs on worker 0 runs the demo shell | partial | `Sysbeam.Worker.Tree` |
+| Four supervision trees: devices, people, programs, networks | named placeholders | partial | `Sysbeam.Worker.Tree` |
 | Cross-tree dependencies | | none | |
 | ltd and easysec signal each other on runtime config change | | none | |
 
 ## busybox
 
-Goal: zero. Today one dynamically linked binary with 278 applet symlinks, and
-every tier runs three busybox shells (`/sbin/sysbeam`, the release launcher,
-the `elixir` wrapper) before a BEAM exists.
+Goal reached: no busybox binary, no applet symlinks, no `/bin/sh` on the
+image. Every process is tinit, a BEAM, or an ERTS helper a BEAM spawned. The
+console is worker 0's IEx on ttyS0.
 
 | Want | Have | Status | Evidence |
 | --- | --- | --- | --- |
-| No ungoverned busybox exec on the boot path | tinit, ltd, easysec each reach their BEAM through three root shells; ltd shells out to `mount` | none | `rootfs_overlay/sbin/sysbeam`, `Ltd.Mounts` |
-| Kernel usermode helpers under policy | `CONFIG_MODPROBE_PATH=/sbin/modprobe` is a busybox symlink; dormant with no modules | none | `linux-6.18.7/.config` |
-| busybox applets reachable only through a worker | worker policy confines what runs under it; everything above runs free | none | 8aa539b |
-| Applet count on the image | 278 | none | `find target -lname '*busybox*'` |
+| No ungoverned busybox exec on the boot path | tinit execs sbexec, sbexec execs beam.smp; ltd mounts via NIF | done | smoke: `BEAMS=4` with no `/bin/sh` on the image |
+| Kernel usermode helpers under policy | `CONFIG_MODPROBE_PATH=""`; no uevent helper | done | `linux.fragment` |
+| busybox applets reachable only through a worker | none to reach | done | smoke host-side assertion |
+| Applet count on the image | 0 | done | smoke host-side assertion |
 
 ## Tally
 
 | Status | Rows |
 | --- | --- |
-| done | 14 |
+| done | 19 |
 | partial | 7 |
-| none | 17 |
+| none | 13 |

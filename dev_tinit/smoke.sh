@@ -3,6 +3,10 @@
 # the worker policy, ltd's reconciliation, and a clean poweroff. Run from the repo root: make test
 set -u
 cd "$(dirname "$0")/.."
+# No busybox on the image: no binary, no applet symlinks, no /bin/sh.
+T=buildroot/output/target
+[ ! -e "$T/bin/busybox" ] && [ ! -e "$T/bin/sh" ] && [ "$(find "$T" -lname '*busybox*' | wc -l)" = 0 ] \
+  || { echo "FAIL: busybox still on the image"; exit 1; }
 IN=$(mktemp -u); LOG=$(mktemp); mkfifo "$IN"
 exec 3<>"$IN"
 timeout 240 ./run_qemu.sh <"$IN" >"$LOG" 2>&1 &
