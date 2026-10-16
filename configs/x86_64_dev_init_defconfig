@@ -26,3 +26,7 @@ BR2_PACKAGE_ERLANG=y
 # ltd config files are Tcl; ltd evaluates them with tclsh
 BR2_PACKAGE_TCL=y
 # BR2_PACKAGE_TCL_SHLIB_ONLY is not set
+
+# easysec applies worker policy with capsh (capability bounding set)
+BR2_PACKAGE_LIBCAP=y
+BR2_PACKAGE_LIBCAP_TOOLS=y

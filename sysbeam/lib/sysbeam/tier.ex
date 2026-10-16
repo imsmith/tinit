@@ -3,6 +3,10 @@ defmodule Sysbeam.Tier do
   Runs the next tier as a port and respawns it when it exits. The child's
   stdin is this port's pipe, so if this BEAM dies the child sees EOF and halts
   (Sysbeam.ParentWatch), taking its own subtree with it.
+
+  Options: `role`, `index`; `argv` to replace the default `/sbin/sysbeam role
+  index` command (easysec wraps it in capsh); `cgroup`, a cgroup v2 directory
+  the child's pid is written into right after each spawn.
   """
   use GenServer
 
@@ -15,7 +19,8 @@ defmodule Sysbeam.Tier do
   def init(opts) do
     role = Keyword.fetch!(opts, :role)
     args = [role | List.wrap(opts[:index])]
-    {:ok, %{args: args, port: open(args)}}
+    state = %{args: args, argv: Keyword.get(opts, :argv, [@sysbeam | args]), cgroup: opts[:cgroup]}
+    {:ok, Map.put(state, :port, open(state))}
   end
 
   @impl true
@@ -25,11 +30,21 @@ defmodule Sysbeam.Tier do
     {:noreply, %{state | port: nil}}
   end
 
-  def handle_info(:respawn, %{args: args} = state), do: {:noreply, %{state | port: open(args)}}
+  def handle_info(:respawn, state), do: {:noreply, %{state | port: open(state)}}
   def handle_info(_, state), do: {:noreply, state}
 
   # ponytail: fixed backoff, no crash-loop detection
-  defp open(args), do: Port.open({:spawn_executable, @sysbeam}, [:exit_status, args: args])
+  defp open(%{argv: [cmd | args], cgroup: cgroup}) do
+    port = Port.open({:spawn_executable, System.find_executable(cmd)}, [:exit_status, args: args])
+
+    # ponytail: the child runs unconfined for the few ms before this write lands
+    if cgroup do
+      {:os_pid, pid} = Port.info(port, :os_pid)
+      File.write!(Path.join(cgroup, "cgroup.procs"), Integer.to_string(pid))
+    end
+
+    port
+  end
 end
 
 defmodule Sysbeam.ParentWatch do

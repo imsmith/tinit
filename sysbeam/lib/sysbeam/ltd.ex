@@ -4,6 +4,7 @@ defmodule Sysbeam.Ltd.Mounts do
   @mounts [
     {"proc", "proc", "/proc"},
     {"sysfs", "sys", "/sys"},
+    {"cgroup2", "cgroup2", "/sys/fs/cgroup"},
     {"devtmpfs", "dev", "/dev"},
     {"tmpfs", "tmp", "/tmp"},
     {"tmpfs", "run", "/run"}

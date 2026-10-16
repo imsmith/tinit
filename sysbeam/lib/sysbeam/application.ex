@@ -9,6 +9,7 @@ defmodule Sysbeam.Application do
   a tier's subtree is a child of its supervisor like everything else.
   """
   use Application
+  alias Sysbeam.Easysec.{Cgroup, Policy}
 
   @workers 2
 
@@ -31,10 +32,19 @@ defmodule Sysbeam.Application do
   end
 
   defp children("easysec", _) do
-    [Sysbeam.PolicyStore] ++
-      for i <- 0..(@workers - 1) do
-        Supervisor.child_spec({Sysbeam.Tier, role: "worker", index: Integer.to_string(i)}, id: {:worker, i})
-      end
+    for i <- 0..(@workers - 1), index = Integer.to_string(i) do
+      policy = Policy.for_worker(index)
+      Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}")
+
+      Supervisor.child_spec(
+        {Sysbeam.Tier,
+         role: "worker",
+         index: index,
+         argv: Policy.exec(policy, ["worker", index]),
+         cgroup: Cgroup.setup!("worker-#{index}", policy)},
+        id: {:worker, i}
+      )
+    end
   end
 
   defp children("worker", index) do

@@ -37,7 +37,7 @@ with it: the config file and the running kernel.
 Try it in the VM:
 
 ```sh
-hostname drifted; sleep 3; cat /etc/ltd/system.tcl
+echo drifted > /proc/sys/kernel/hostname; sleep 3; cat /etc/ltd/system.tcl
 printf 'hostname fromfile\nsysctl net.ipv4.ip_forward 0\n' > /etc/ltd/system.tcl; sleep 3; hostname
 echo hostname > /etc/ltd/system.tcl    # refused, logged, nothing changes
 ```
@@ -46,6 +46,31 @@ Unit tests for the file format run on the host with its own tclsh:
 
 ```bash
 cd sysbeam && mix test
+```
+
+## easysec's first policy
+
+Every worker is started through easysec, and easysec applies the worker's
+policy before `/sbin/sysbeam` is exec'd, so nothing under the worker,
+including the demo shell, can escape it.
+
+- Policy is an allow-list per worker in `Sysbeam.Easysec.Policy`: the
+  capabilities it keeps and a pids limit. Worker 0 keeps `net_admin` and
+  `sys_boot` (it may power the VM off), worker 1 keeps nothing.
+- Capabilities: easysec runs the worker as `capsh --drop=<everything else>
+  --no-new-privs --shell=/sbin/sysbeam -- worker N`. The bounding set is gone
+  for the whole subtree; root uid without capabilities is just a uid.
+- cgroups: ltd mounts cgroup2 on `/sys/fs/cgroup`; easysec creates
+  `/sys/fs/cgroup/easysec/worker-N` with `pids.max` and writes each spawned
+  worker's pid into it. A respawned worker lands in the same cgroup.
+
+Try it in the VM:
+
+```sh
+grep CapBnd /proc/self/status     # 0000000000401000: net_admin, sys_boot
+hostname x                        # sethostname needs sys_admin: not permitted
+cat /proc/self/cgroup /sys/fs/cgroup/easysec/worker-0/pids.max
+for i in $(seq 200); do sleep 3 & done   # can't fork once pids.max is hit
 ```
 
 sysbeam is the mix project in `sysbeam/`, one OTP application whose
