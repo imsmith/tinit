@@ -32,6 +32,7 @@ rm -rf "$TARGET_DIR/usr/lib/sysbeam" "$TARGET_DIR/usr/lib/elixir"
 
 # sbexec: the launcher that execs beam.smp directly. ERTS and release versions come from the
 # release itself so the C never drifts from what mix built.
-read -r ERTS_VSN REL_VSN < "$TARGET_DIR/usr/lib/sysbeam/releases/start_erl.data"
+# start_erl.data has no trailing newline, so read returns 1 after filling both variables.
+read -r ERTS_VSN REL_VSN < "$TARGET_DIR/usr/lib/sysbeam/releases/start_erl.data" || [ -n "$REL_VSN" ]
 "$CC" -static -Os -Wall -Werror -DERTS_VSN="\"$ERTS_VSN\"" -DREL_VSN="\"$REL_VSN\"" \
 	-o "$TARGET_DIR/sbin/sbexec" "$HERE/sbexec.c"
