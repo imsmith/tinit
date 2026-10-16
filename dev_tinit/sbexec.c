@@ -175,6 +175,7 @@ int main(int argc, char **argv)
 	setenv("SYSBEAM_ROLE", role, 1);
 	setenv("SYSBEAM_INDEX", index, 1);
 	setenv("HOME", "/root", 1);
+	setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1); /* System.cmd and erl_child_setup resolve names through it */
 	setenv("TERM", "vt100", 1);
 	setenv("BINDIR", BINDIR, 1);
 	setenv("ROOTDIR", ROOT, 1);
