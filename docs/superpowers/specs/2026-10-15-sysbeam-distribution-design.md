@@ -21,6 +21,11 @@ about the Linux distribution, not `-sname`.
 
 ## Where the shells are today
 
+Boot itself starts in a shell: Buildroot's cpio image installs `/init`, a
+`#!/bin/sh` script that mounts devtmpfs and execs `/sbin/init`. With static
+device creation it becomes a plain symlink to tinit and the static table
+provides `/dev/console`, `/dev/null` and `/dev/ttyS0`.
+
 Every tier reaches its BEAM through three busybox shells: `/sbin/sysbeam`
 (our wrapper), `/usr/lib/sysbeam/bin/sysbeam` (mix release launcher), and
 `releases/0.1.0/elixir` (Elixir's erl wrapper), which finally execs
@@ -132,7 +137,8 @@ so nothing else changes.
 
 ### Image
 
-Defconfig: `BR2_PACKAGE_BUSYBOX` unset, `BR2_SYSTEM_BIN_SH_NONE=y`,
+Defconfig: `BR2_ROOTFS_DEVICE_CREATION_STATIC=y` (phase 1, so `/init` is
+tinit), `BR2_PACKAGE_BUSYBOX` unset, `BR2_SYSTEM_BIN_SH_NONE=y`,
 `BR2_PACKAGE_LIBCAP` and `_TOOLS` removed. erlang depends on ncurses,
 openssl, zlib; tcl on nothing; none need busybox. `skeleton-init-none`
 stays. `post-build.sh` is host-side and unaffected. `sysbeam/fake-sysbeam.sh`
