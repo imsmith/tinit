@@ -1,0 +1,90 @@
+/* Sysbeam.Sys: the handful of syscalls ltd needs that Erlang has no API for.
+ * mount, umount, reboot. Strings arrive as binaries and are copied into fixed
+ * buffers; anything that does not fit is badarg, never truncated. */
+#include <erl_nif.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/mount.h>
+#include <sys/reboot.h>
+#include <unistd.h>
+
+static ERL_NIF_TERM errno_atom(ErlNifEnv *env, int e)
+{
+	switch (e) {
+	case EPERM: return enif_make_atom(env, "eperm");
+	case ENOENT: return enif_make_atom(env, "enoent");
+	case EBUSY: return enif_make_atom(env, "ebusy");
+	case EINVAL: return enif_make_atom(env, "einval");
+	case EACCES: return enif_make_atom(env, "eacces");
+	case ENODEV: return enif_make_atom(env, "enodev");
+	case ENOTDIR: return enif_make_atom(env, "enotdir");
+	case ENOTBLK: return enif_make_atom(env, "enotblk");
+	default: {
+		char buf[16];
+		snprintf(buf, sizeof buf, "errno_%d", e);
+		return enif_make_atom(env, buf);
+	}
+	}
+}
+
+static ERL_NIF_TERM result(ErlNifEnv *env, int rc)
+{
+	if (rc == 0)
+		return enif_make_atom(env, "ok");
+	return enif_make_tuple2(env, enif_make_atom(env, "error"), errno_atom(env, errno));
+}
+
+static int get_str(ErlNifEnv *env, ERL_NIF_TERM t, char *buf, size_t n)
+{
+	ErlNifBinary b;
+	if (!enif_inspect_binary(env, t, &b) || b.size >= n)
+		return 0;
+	memcpy(buf, b.data, b.size);
+	buf[b.size] = 0;
+	return 1;
+}
+
+static ERL_NIF_TERM mount_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	char src[4096], tgt[4096], type[256], data[256];
+	unsigned long flags;
+	(void)argc;
+	if (!get_str(env, argv[0], src, sizeof src) || !get_str(env, argv[1], tgt, sizeof tgt) ||
+	    !get_str(env, argv[2], type, sizeof type) || !enif_get_ulong(env, argv[3], &flags) ||
+	    !get_str(env, argv[4], data, sizeof data))
+		return enif_make_badarg(env);
+	return result(env, mount(src, tgt, type, flags, data));
+}
+
+static ERL_NIF_TERM umount_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	char tgt[4096];
+	(void)argc;
+	if (!get_str(env, argv[0], tgt, sizeof tgt))
+		return enif_make_badarg(env);
+	return result(env, umount(tgt));
+}
+
+static ERL_NIF_TERM reboot_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	char how[16];
+	int cmd;
+	(void)argc;
+	if (!enif_get_atom(env, argv[0], how, sizeof how, ERL_NIF_LATIN1))
+		return enif_make_badarg(env);
+	if (strcmp(how, "poweroff") == 0) cmd = RB_POWER_OFF;
+	else if (strcmp(how, "restart") == 0) cmd = RB_AUTOBOOT;
+	else if (strcmp(how, "halt") == 0) cmd = RB_HALT_SYSTEM;
+	else return enif_make_badarg(env);
+	sync();
+	return result(env, reboot(cmd));
+}
+
+static ErlNifFunc funcs[] = {
+	{"mount", 5, mount_nif, 0},
+	{"umount", 1, umount_nif, 0},
+	{"reboot", 1, reboot_nif, 0},
+};
+
+ERL_NIF_INIT(Elixir.Sysbeam.Sys, funcs, NULL, NULL, NULL, NULL)
