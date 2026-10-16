@@ -29,3 +29,9 @@ rm -rf "$TARGET_DIR/usr/lib/sysbeam" "$TARGET_DIR/usr/lib/elixir"
 (cd "$HERE/../sysbeam" && \
 	PATH="$HOST_DIR/bin:$HOST_DIR/elixir/bin:$PATH" MIX_ENV=prod MIX_HOME="$BUILD_DIR/mix-home" \
 	mix release --overwrite --quiet --path "$TARGET_DIR/usr/lib/sysbeam")
+
+# sbexec: the launcher that execs beam.smp directly. ERTS and release versions come from the
+# release itself so the C never drifts from what mix built.
+read -r ERTS_VSN REL_VSN < "$TARGET_DIR/usr/lib/sysbeam/releases/start_erl.data"
+"$CC" -static -Os -Wall -Werror -DERTS_VSN="\"$ERTS_VSN\"" -DREL_VSN="\"$REL_VSN\"" \
+	-o "$TARGET_DIR/sbin/sbexec" "$HERE/sbexec.c"
