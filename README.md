@@ -7,16 +7,22 @@ each tier starting and supervising the next.
 ```text
 tinit (PID 1)                       dev_tinit/tinit.c
   `-- sysbeam ltd                   mounts, then system config as a live materialized view
+      (via /sbin/sbexec, dev_tinit/sbexec.c: beam.smp exec'd directly, no shell)
         `-- sysbeam easysec         security policy (SELinux, cgroups, capabilities)
               |-- sysbeam worker 0  supervision trees: devices, people, programs, networks
               `-- sysbeam worker 1
 ```
 
-The role is argv[1] (and argv[0], which a #! script never sees). tinit knows
-only ltd. ltd runs easysec as a port and respawns it if it exits; easysec does
-the same for each worker. A child tier halts when its stdin hits EOF, which is
-how it learns its parent BEAM died, so a dead tier takes its subtree with it
-and the respawn rebuilds the whole branch.
+Every BEAM is started by `sbexec ROLE [INDEX]`, a static C launcher that sets
+a parent-death signal, joins a cgroup, drops the capability bounding set, wires
+stdio, and execs `beam.smp` with the argv erlexec would build. tinit knows only
+ltd. ltd runs easysec through sbexec as a port and respawns it if it exits;
+easysec does the same for each worker. When a BEAM dies its port children get
+SIGTERM, so a dead tier takes its subtree with it and the respawn rebuilds the
+whole branch.
+
+The console is worker 0's own IEx on ttyS0. There is no shell on the box by
+design; see SCORECARD.md's busybox section.
 
 ## ltd's first subsystem
 
@@ -36,10 +42,10 @@ with it: the config file and the running kernel.
 
 Try it in the VM:
 
-```sh
-echo drifted > /proc/sys/kernel/hostname; sleep 3; cat /etc/ltd/system.tcl
-printf 'hostname fromfile\nsysctl net.ipv4.ip_forward 0\n' > /etc/ltd/system.tcl; sleep 3; hostname
-echo hostname > /etc/ltd/system.tcl    # refused, logged, nothing changes
+```elixir
+File.write!("/proc/sys/kernel/hostname", "drifted"); Process.sleep(3000); IO.puts(File.read!("/etc/ltd/system.tcl"))
+File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\n")
+File.write!("/etc/ltd/system.tcl", "hostname\n")    # refused, logged, nothing changes
 ```
 
 Unit tests for the file format run on the host with its own tclsh:
@@ -52,31 +58,32 @@ cd sysbeam && mix test
 
 Every worker is started through easysec, and easysec applies the worker's
 policy before `/sbin/sysbeam` is exec'd, so nothing under the worker,
-including the demo shell, can escape it.
+including the IEx console, can escape it.
 
 - Policy is an allow-list per worker in `Sysbeam.Easysec.Policy`: the
   capabilities it keeps and a pids limit. Worker 0 keeps `net_admin` and
   `sys_boot` (it may power the VM off), worker 1 keeps nothing.
-- Capabilities: easysec runs the worker as `capsh --drop=<everything else>
-  --no-new-privs --shell=/sbin/sysbeam -- worker N`. The bounding set is gone
+- Capabilities: easysec runs the worker as `sbexec -c <cgroup> -d -k net_admin
+  -k sys_boot worker 0`; sbexec joins the cgroup, drops the bounding set with
+  `prctl`, sets no_new_privs, and execs `beam.smp`. The bounding set is gone
   for the whole subtree; root uid without capabilities is just a uid.
 - cgroups: ltd mounts cgroup2 on `/sys/fs/cgroup`; easysec creates
-  `/sys/fs/cgroup/easysec/worker-N` with `pids.max` and writes each spawned
-  worker's pid into it. A respawned worker lands in the same cgroup.
+  `/sys/fs/cgroup/easysec/worker-N` with `pids.max`, and sbexec writes its own
+  pid into it before exec. A respawned worker lands in the same cgroup.
 
 Try it in the VM:
 
-```sh
-grep CapBnd /proc/self/status     # 0000000000401000: net_admin, sys_boot
-hostname x                        # sethostname needs sys_admin: not permitted
-cat /proc/self/cgroup /sys/fs/cgroup/easysec/worker-0/pids.max
-for i in $(seq 200); do sleep 3 & done   # can't fork once pids.max is hit
+```elixir
+File.read!("/proc/self/status") |> String.split("\n") |> Enum.filter(&(&1 =~ "CapBnd"))   # 0000000000401000
+Sysbeam.Sys.mount("none", "/mnt", "tmpfs", 0, "")                                        # {:error, :eperm}
+File.read!("/proc/self/cgroup")                                                           # 0::/easysec/worker-0
+Sysbeam.Sys.reboot(:poweroff)
 ```
 
 sysbeam is the mix project in `sysbeam/`, one OTP application whose
 supervisor's children depend on the role. It ships as a mix release built
 against Buildroot's host OTP 26 with `include_erts: false`, so the image's
-`/usr/lib/erlang` is the runtime. Worker 0's programs tree runs the demo shell.
+`/usr/lib/erlang` is the runtime. Worker 0 is started on ttyS0 and runs IEx.
 `sysbeam/fake-sysbeam.sh` is the same chain in shell, kept for testing tinit
 without a BEAM.
 

@@ -1,41 +1,45 @@
 #!/bin/bash
-# Smoke test: boot the image, use the worker shell, exit it, confirm easysec respawned it.
-# Drives QEMU's serial console through a FIFO. Run from the repo root: make test
+# Smoke test: boot the image, drive worker 0's IEx on the serial console, confirm the chain,
+# the worker policy, ltd's reconciliation, and a clean poweroff. Run from the repo root: make test
 set -u
 cd "$(dirname "$0")/.."
 IN=$(mktemp -u); LOG=$(mktemp); mkfifo "$IN"
 exec 3<>"$IN"
-timeout 180 ./run_qemu.sh <"$IN" >"$LOG" 2>&1 &
-waitfor() { for _ in $(seq 1 90); do [ "$(grep -c "$1" "$LOG")" -ge "$2" ] && return 0; sleep 1; done; echo "FAIL: timeout waiting for '$1' x$2"; tail -20 "$LOG"; exit 1; }
-waitfor "interactive shell" 1; sleep 2
-printf 'ps -o args | grep -c "[b]eam.smp"\n' >&3; sleep 2
-printf 'exit\n' >&3
-waitfor "interactive shell" 2; sleep 2
-printf 'echo RESPAWNED SHELL PID $$\n' >&3; sleep 1
-# easysec policy: worker 0 keeps only net_admin(12) and sys_boot(22) in its bounding set,
-# lives in its own cgroup with a pids limit. sethostname needs sys_admin, so it is refused;
-# a fork storm hits pids.max.
-printf 'grep CapBnd /proc/self/status; cat /proc/self/cgroup /sys/fs/cgroup/easysec/worker-0/pids.max\n' >&3; sleep 1
-printf 'hostname blocked 2>&1 | grep -c "not permitted"\n' >&3; sleep 1
-printf 'echo FORKS_BLOCKED=$( (for i in $(seq 1 200); do sleep 3 & done) 2>&1 | grep -c fork)\n' >&3; sleep 6
-# kernel -> file: drift the hostname (via /proc, no capability needed), ltd must adopt it
-printf 'echo drifted > /proc/sys/kernel/hostname\n' >&3
-waitfor "drift: hostname sysbeam-demo -> drifted; config file updated" 1; sleep 1
-printf 'grep -c "^hostname drifted$" /etc/ltd/system.tcl\n' >&3; sleep 1
-# file -> kernel: rewrite the config, ltd must apply it
-printf 'printf "hostname fromfile\\nsysctl net.ipv4.ip_forward 0\\n" > /etc/ltd/system.tcl\n' >&3
-waitfor "config file changed, applied" 1; sleep 1
-printf 'echo FWD=$(cat /proc/sys/net/ipv4/ip_forward) HOST=$(hostname)\n' >&3; sleep 1
-# a broken file is refused and the view stays
-printf 'echo "hostname" > /etc/ltd/system.tcl\n' >&3
-waitfor "config file changed but refused" 1; sleep 1
-printf 'poweroff -f\n' >&3; sleep 3
+timeout 240 ./run_qemu.sh <"$IN" >"$LOG" 2>&1 &
+waitfor() { for _ in $(seq 1 90); do [ "$(grep -c "$1" "$LOG")" -ge "$2" ] && return 0; sleep 1; done; echo "FAIL: timeout waiting for '$1' x$2"; tail -30 "$LOG"; exit 1; }
+iex() { printf '%s\n' "$1" >&3; sleep "${2:-2}"; }
+
+waitfor "iex(1)>" 1; sleep 2
+# four BEAMs: ltd, easysec, worker 0, worker 1
+iex 'IO.puts("BEAMS=#{Enum.count(File.ls!("/proc"), fn p -> p =~ ~r/^\d+$/ and File.read("/proc/#{p}/comm") == {:ok, "beam.smp\n"} end)}")'
+# halt the worker: easysec respawns it and a fresh IEx comes up
+iex 'System.halt(0)'
+waitfor "iex(1)>" 2; sleep 2
+# policy: bounding set is net_admin(12)+sys_boot(22), own cgroup, pids limit
+iex 'IO.puts("CAPBND=" <> (File.read!("/proc/self/status") |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "CapBnd:")) |> String.split("\t") |> List.last()))'
+iex 'IO.puts("CGROUP=" <> String.trim(File.read!("/proc/self/cgroup")) <> " PIDSMAX=" <> String.trim(File.read!("/sys/fs/cgroup/easysec/worker-0/pids.max")))'
+# mount needs sys_admin, which the worker does not have
+iex 'IO.puts("MOUNT=#{inspect(Sysbeam.Sys.mount("none", "/mnt", "tmpfs", 0, ""))}")'
+# fork storm: inet_gethost blocks on stdin, so the ports hold pids until closed
+iex 'ports = for _ <- 1..200, do: (try do Port.open({:spawn_executable, Path.join([:code.root_dir(), "erts-#{:erlang.system_info(:version)}", "bin", "inet_gethost"])}, []) rescue ErlangError -> nil end); IO.puts("FORKS_BLOCKED=#{Enum.count(ports, &is_nil/1)}"); Enum.each(ports, &(&1 && Port.close(&1)))' 5
+# kernel -> file: drift the hostname, ltd adopts it and rewrites the config
+iex 'File.write!("/proc/sys/kernel/hostname", "drifted")'
+waitfor "drift: hostname sysbeam-demo -> drifted; config file updated" 1
+iex 'IO.puts("FILE=#{File.read!("/etc/ltd/system.tcl") =~ "hostname drifted"}")'
+# file -> kernel
+iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\n")'
+waitfor "config file changed, applied" 1
+iex 'IO.puts("FWD=" <> String.trim(File.read!("/proc/sys/net/ipv4/ip_forward")) <> " HOST=" <> String.trim(File.read!("/proc/sys/kernel/hostname")))'
+# a broken file is refused
+iex 'File.write!("/etc/ltd/system.tcl", "hostname\n")'
+waitfor "config file changed but refused" 1
+iex 'Sysbeam.Sys.reboot(:poweroff)' 3
 exec 3>&-; rm -f "$IN"
 sed -i 's/\r$//' "$LOG"
-grep -q "config reconciliation loop active" "$LOG" && grep -q "^4$" "$LOG" && grep -q "worker 0 exited 0, respawning" "$LOG" && grep -q "RESPAWNED SHELL PID" "$LOG" \
-  && grep -q "^1$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
-  && grep -q "^CapBnd:.0000000000401000$" "$LOG" && grep -q "^0::/easysec/worker-0$" "$LOG" && grep -q "^128$" "$LOG" \
-  && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
+grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG" && grep -q "worker 0 exited 0, respawning" "$LOG" \
+  && grep -q "^CAPBND=0000000000401000$" "$LOG" && grep -q "^CGROUP=0::/easysec/worker-0 PIDSMAX=128$" "$LOG" \
+  && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
+  && grep -q "^FILE=true$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
   && grep -q "Power down" "$LOG" \
-  && { echo "PASS: chain up, 4 BEAMs, worker respawned, worker policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, clean poweroff"; rm -f "$LOG"; } \
+  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, clean poweroff"; rm -f "$LOG"; } \
   || { echo "FAIL"; cat "$LOG"; exit 1; }
