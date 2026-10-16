@@ -10,4 +10,9 @@ defmodule Sysbeam.Easysec.PolicyTest do
   test "a worker that keeps nothing still drops" do
     assert Policy.exec(%{caps: [], pids_max: 64}, "/cg", ["worker", "1"]) == ["-c", "/cg", "-d", "worker", "1"]
   end
+
+  test "a worker with a console gets its tty" do
+    assert Policy.exec(%{caps: [], pids_max: 1, console: "/dev/ttyS0"}, "/cg", ["worker", "0"]) ==
+             ["-c", "/cg", "-d", "-t", "/dev/ttyS0", "worker", "0"]
+  end
 end

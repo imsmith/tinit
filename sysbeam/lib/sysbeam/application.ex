@@ -44,12 +44,9 @@ defmodule Sysbeam.Application do
     end
   end
 
-  defp children("worker", index) do
+  defp children("worker", _index) do
     for tree <- ~w(devices people programs networks) do
-      Supervisor.child_spec(
-        {Sysbeam.Worker.Tree, name: tree, shell?: tree == "programs" and index == "0"},
-        id: {:tree, tree}
-      )
+      Supervisor.child_spec({Sysbeam.Worker.Tree, name: tree}, id: {:tree, tree})
     end
   end
 

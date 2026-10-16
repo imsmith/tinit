@@ -6,17 +6,20 @@ defmodule Sysbeam.Easysec.Policy do
   outgrows two values per worker; then it moves to /etc/easysec/policy.tcl.
   """
 
-  # Worker 0 runs the demo console: it may power the VM off and touch the network, nothing else.
+  # Worker 0 owns the console: IEx on ttyS0. It may power the VM off and touch the network, nothing else.
   @workers %{
-    "0" => %{caps: ~w(net_admin sys_boot), pids_max: 128},
+    "0" => %{caps: ~w(net_admin sys_boot), pids_max: 128, console: "/dev/ttyS0"},
     "1" => %{caps: [], pids_max: 64}
   }
 
   def for_worker(index), do: Map.fetch!(@workers, index)
 
   @doc "sbexec arguments that apply `policy` inside `cgroup` and then start `args` (role, index)."
-  def exec(%{caps: keep}, cgroup, args) do
-    ["-c", cgroup, "-d"] ++ Enum.flat_map(keep, &["-k", &1]) ++ args
+  def exec(%{caps: keep} = policy, cgroup, args) do
+    ["-c", cgroup, "-d"] ++
+      Enum.flat_map(keep, &["-k", &1]) ++
+      if(policy[:console], do: ["-t", policy.console], else: []) ++
+      args
   end
 end
 
