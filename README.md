@@ -57,7 +57,7 @@ cd sysbeam && mix test
 ## easysec's first policy
 
 Every worker is started through easysec, and easysec applies the worker's
-policy before `/sbin/sysbeam` is exec'd, so nothing under the worker,
+policy in `sbexec` before `beam.smp` is exec'd, so nothing under the worker,
 including the IEx console, can escape it.
 
 - Policy is an allow-list per worker in `Sysbeam.Easysec.Policy`: the
@@ -119,8 +119,9 @@ exit                  # worker 0 halts, easysec respawns it a second later
   runs the next tier as a port and respawns it, `ltd.ex` holds the mounts, the
   Tcl config loader, the `/proc/sys` adapter and the reconciler, `easysec.ex`
   and `worker.ex` are still placeholders.
-- `dev_tinit/rootfs_overlay/sbin/sysbeam`: wrapper that runs the harness with
-  stdout on `/dev/console` so child tiers log past their parent's port.
+- `dev_tinit/sbexec.c`: the launcher every BEAM starts through. Parent-death
+  signal, cgroup join, bounding-set drop, stdio (console or tty), then a direct
+  exec of `beam.smp`. `sbexec -n` prints the argv it would run.
 - `buildroot/`: upstream Buildroot 2026.02.3 as a submodule. Clone with
   `git clone --recurse-submodules`. Its `output/host` tree bakes in absolute
   paths, so do not move the checkout after building.

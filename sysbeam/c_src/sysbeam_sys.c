@@ -30,9 +30,10 @@ static ERL_NIF_TERM errno_atom(ErlNifEnv *env, int e)
 
 static ERL_NIF_TERM result(ErlNifEnv *env, int rc)
 {
+	int e = errno; /* before any enif_* call: argument evaluation order is unspecified */
 	if (rc == 0)
 		return enif_make_atom(env, "ok");
-	return enif_make_tuple2(env, enif_make_atom(env, "error"), errno_atom(env, errno));
+	return enif_make_tuple2(env, enif_make_atom(env, "error"), errno_atom(env, e));
 }
 
 static int get_str(ErlNifEnv *env, ERL_NIF_TERM t, char *buf, size_t n)

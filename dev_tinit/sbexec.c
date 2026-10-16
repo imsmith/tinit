@@ -83,8 +83,11 @@ static int read_last_cap(void)
 	if (fd < 0 || read(fd, buf, sizeof buf - 1) <= 0)
 		die("/proc/sys/kernel/cap_last_cap");
 	close(fd);
+	/* Drop up to what this kernel has, not up to what this table names: a newer
+	 * kernel's capabilities must not stay grantable because we never heard of them.
+	 * 63 is the keep bitmask's width. */
 	int last = atoi(buf);
-	return last < (int)NCAPS ? last : (int)NCAPS - 1;
+	return last < 63 ? last : 63;
 }
 
 static void stdio_to(const char *in, const char *out)
@@ -118,6 +121,10 @@ int main(int argc, char **argv)
 	}
 	if (optind >= argc)
 		return usage();
+	if (keep && !drop) {
+		fputs("sbexec: -k without -d keeps everything; say -d\n", stderr);
+		return 2;
+	}
 	const char *role = argv[optind];
 	const char *index = optind + 1 < argc ? argv[optind + 1] : "0";
 

@@ -22,6 +22,7 @@ OUT=$("$BIN" -n ltd)
 echo "$OUT" | grep -qx 'env SYSBEAM_ROLE=ltd SYSBEAM_INDEX=0' || fail "index defaults to 0"
 
 "$BIN" -n -d -k not_a_cap worker 0 >/dev/null 2>&1 && fail "unknown cap must fail"
+"$BIN" -n -k net_admin worker 0 >/dev/null 2>&1 && fail "-k without -d must fail (it would silently keep everything)"
 rc=0; "$BIN" -n >/dev/null 2>&1 || rc=$?; [ "$rc" -eq 2 ] || fail "no role must exit 2 (got $rc)"
 
 rm -f "$BIN"

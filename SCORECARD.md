@@ -15,13 +15,13 @@ tracks how far it still reaches.
 | --- | --- | --- | --- |
 | Fork once, reap forever | `dev_tinit/tinit.c`: spawn ltd, `wait()` loop, respawn ltd | done | 0fcdee6, 3fb5055 |
 | Stays C, stays tiny | one static file, 26 KB binary | done | `post-build.sh` |
-| Knows only ltd | execs `/sbin/sysbeam ltd` and nothing else | done | 3fb5055 |
+| Knows only ltd | execs `/sbin/sbexec ltd` and nothing else | done | 3fb5055, a15fb91 |
 
 ## Chain
 
 | Want | Have | Status | Evidence |
 | --- | --- | --- | --- |
-| tinit -> ltd -> easysec -> worker 0..n | one BEAM program, role from argv[1] | done | 365c18f, smoke: 4 BEAMs |
+| tinit -> ltd -> easysec -> worker 0..n | one BEAM program, role from `SYSBEAM_ROLE` set by sbexec | done | 365c18f, smoke: `BEAMS=4` |
 | Each tier runs and respawns the next | `Sysbeam.Tier` ports | done | smoke: `worker 0 exited 0, respawning` |
 | Dead parent takes its subtree with it | sbexec sets PR_SET_PDEATHSIG; erl_child_setup exits with its BEAM | done | `sbexec.c`, smoke: respawn |
 | No shell on the boot path | tinit execs sbexec, sbexec execs beam.smp; `/init` is a symlink to tinit | done | `sbexec_check.sh`, smoke |
