@@ -11,7 +11,7 @@ defmodule Sysbeam.MixProject do
       aliases: [test: "test --no-start"],
       releases: [
         # ERTS comes from the image's /usr/lib/erlang (Buildroot), not the release.
-        sysbeam: [include_erts: false, include_executables_for: [:unix], strip_beams: true]
+        sysbeam: [include_erts: false, include_executables_for: [], strip_beams: true]
       ]
     ]
   end

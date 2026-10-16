@@ -1,21 +1,12 @@
 defmodule Sysbeam.Easysec.Policy do
   @moduledoc """
-  What each worker may do. `caps` is an allow-list: every other capability
-  leaves the bounding set before /sbin/sysbeam is exec'd, so nothing in the
-  worker, including the demo shell, can get them back. `pids_max` caps the
-  worker's cgroup. Hardcoded until policy outgrows two values per worker;
-  then it moves to /etc/easysec/policy.tcl like ltd's config.
+  What each worker may do. `caps` is an allow-list: sbexec drops every other
+  capability from the bounding set before exec, so nothing in the worker can
+  get them back. `pids_max` caps the worker's cgroup. Hardcoded until policy
+  outgrows two values per worker; then it moves to /etc/easysec/policy.tcl.
   """
 
-  # Linux 6.18: capabilities 0..40, in kernel order.
-  @caps ~w(chown dac_override dac_read_search fowner fsetid kill setgid setuid setpcap
-           linux_immutable net_bind_service net_broadcast net_admin net_raw ipc_lock ipc_owner
-           sys_module sys_rawio sys_chroot sys_ptrace sys_pacct sys_admin sys_boot sys_nice
-           sys_resource sys_time sys_tty_config mknod lease audit_write audit_control setfcap
-           mac_override mac_admin syslog wake_alarm block_suspend audit_read perfmon bpf
-           checkpoint_restore)
-
-  # Worker 0 runs the demo shell: it may power the VM off and touch the network, nothing else.
+  # Worker 0 runs the demo console: it may power the VM off and touch the network, nothing else.
   @workers %{
     "0" => %{caps: ~w(net_admin sys_boot), pids_max: 128},
     "1" => %{caps: [], pids_max: 64}
@@ -23,10 +14,9 @@ defmodule Sysbeam.Easysec.Policy do
 
   def for_worker(index), do: Map.fetch!(@workers, index)
 
-  @doc "argv that applies the policy and execs /sbin/sysbeam with `args`, via libcap's capsh."
-  def exec(%{caps: keep}, args) do
-    drop = Enum.map_join(@caps -- keep, ",", &("cap_" <> &1))
-    ["capsh", "--drop=#{drop}", "--no-new-privs", "--shell=/sbin/sysbeam", "--" | args]
+  @doc "sbexec arguments that apply `policy` inside `cgroup` and then start `args` (role, index)."
+  def exec(%{caps: keep}, cgroup, args) do
+    ["-c", cgroup, "-d"] ++ Enum.flat_map(keep, &["-k", &1]) ++ args
   end
 end
 

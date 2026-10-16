@@ -1,7 +1,7 @@
 defmodule Sysbeam.Application do
   @moduledoc """
   One application, three roles. The role comes from SYSBEAM_ROLE, set by
-  /sbin/sysbeam from argv[1].
+  /sbin/sbexec from its ROLE argument.
 
       tinit -> sysbeam(ltd) -> sysbeam(easysec) -> sysbeam(worker 0..n)
 
@@ -19,7 +19,7 @@ defmodule Sysbeam.Application do
     index = System.get_env("SYSBEAM_INDEX", "0")
     Sysbeam.log(role, "BEAM VM started (pid #{System.pid()})")
 
-    children = if(role == "ltd", do: [], else: [Sysbeam.ParentWatch]) ++ children(role, index)
+    children = children(role, index)
     Supervisor.start_link(children, strategy: :one_for_one, name: Sysbeam.Supervisor)
   end
 
@@ -34,14 +34,11 @@ defmodule Sysbeam.Application do
   defp children("easysec", _) do
     for i <- 0..(@workers - 1), index = Integer.to_string(i) do
       policy = Policy.for_worker(index)
+      cgroup = Cgroup.setup!("worker-#{index}", policy)
       Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}")
 
       Supervisor.child_spec(
-        {Sysbeam.Tier,
-         role: "worker",
-         index: index,
-         argv: Policy.exec(policy, ["worker", index]),
-         cgroup: Cgroup.setup!("worker-#{index}", policy)},
+        {Sysbeam.Tier, role: "worker", index: index, args: Policy.exec(policy, cgroup, ["worker", index])},
         id: {:worker, i}
       )
     end

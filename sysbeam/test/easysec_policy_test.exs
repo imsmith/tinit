@@ -2,14 +2,12 @@ defmodule Sysbeam.Easysec.PolicyTest do
   use ExUnit.Case, async: true
   alias Sysbeam.Easysec.Policy
 
-  test "worker argv drops every capability not kept, then execs sysbeam" do
-    argv = Policy.exec(%{caps: ["net_admin"], pids_max: 64}, ["worker", "0"])
+  test "worker args: join cgroup, drop all but kept caps, then role and index" do
+    assert Policy.exec(%{caps: ["net_admin", "sys_boot"], pids_max: 64}, "/sys/fs/cgroup/easysec/worker-0", ["worker", "0"]) ==
+             ["-c", "/sys/fs/cgroup/easysec/worker-0", "-d", "-k", "net_admin", "-k", "sys_boot", "worker", "0"]
+  end
 
-    assert ["capsh", "--drop=" <> drop, "--no-new-privs", "--shell=/sbin/sysbeam", "--", "worker", "0"] = argv
-    dropped = String.split(drop, ",")
-    assert "cap_sys_admin" in dropped
-    refute "cap_net_admin" in dropped
-    # kernel 6.18 has capabilities 0..40
-    assert length(dropped) == 40
+  test "a worker that keeps nothing still drops" do
+    assert Policy.exec(%{caps: [], pids_max: 64}, "/cg", ["worker", "1"]) == ["-c", "/cg", "-d", "worker", "1"]
   end
 end
