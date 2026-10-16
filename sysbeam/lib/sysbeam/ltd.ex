@@ -1,22 +1,24 @@
 defmodule Sysbeam.Ltd.Mounts do
   @moduledoc "ltd's first job: the virtual filesystems. Synchronous, so later children can rely on /proc."
+  alias Sysbeam.Sys
 
+  # {source, target, fstype}. devtmpfs goes over the static /dev nodes the cpio shipped.
   @mounts [
-    {"proc", "proc", "/proc"},
-    {"sysfs", "sys", "/sys"},
-    {"cgroup2", "cgroup2", "/sys/fs/cgroup"},
-    {"devtmpfs", "dev", "/dev"},
-    {"tmpfs", "tmp", "/tmp"},
-    {"tmpfs", "run", "/run"}
+    {"proc", "/proc", "proc"},
+    {"sys", "/sys", "sysfs"},
+    {"cgroup2", "/sys/fs/cgroup", "cgroup2"},
+    {"dev", "/dev", "devtmpfs"},
+    {"tmp", "/tmp", "tmpfs"},
+    {"run", "/run", "tmpfs"}
   ]
 
   def child_spec(_), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
 
   def start_link do
-    for {type, name, target} <- @mounts do
-      case System.cmd("mount", ["-t", type, name, target], stderr_to_stdout: true) do
-        {_, 0} -> Sysbeam.log("ltd", "mounted #{target}")
-        {err, _} -> Sysbeam.log("ltd", "mount #{target} skipped: #{String.trim(err)}")
+    for {source, target, type} <- @mounts do
+      case Sys.mount(source, target, type, 0, "") do
+        :ok -> Sysbeam.log("ltd", "mounted #{target}")
+        {:error, reason} -> Sysbeam.log("ltd", "mount #{target} skipped: #{reason}")
       end
     end
 
