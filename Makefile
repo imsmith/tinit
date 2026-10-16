@@ -6,6 +6,7 @@ build: $(BR)/.config
 $(BR)/.config: configs/x86_64_dev_init_defconfig
 	$(MAKE) -C $(BR) defconfig BR2_DEFCONFIG=../$<
 test:
+	./dev_tinit/sbexec_check.sh
 	./dev_tinit/smoke.sh
 run:
 	./run_qemu.sh
