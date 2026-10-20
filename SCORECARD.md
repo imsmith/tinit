@@ -36,7 +36,7 @@ tracks how far it still reaches.
 | Hostname | reconciled both ways | done | e977438, smoke: drift and apply |
 | sysctl | reconciled both ways | done | e977438, smoke: `FWD=0` |
 | Kernel params and modules | kernel built without modules | none | |
-| System clock | | none | |
+| System clock | kernel sets it from CMOS at boot (x86 `read_persistent_clock`); no RTC driver, no userland | done | smoke: `CLOCK` within 300 s of host |
 | eBPF programs | | none | |
 | Internal bridges | | none | |
 | wireguard config and peer table | | none | |
@@ -86,6 +86,6 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 19 |
+| done | 20 |
 | partial | 7 |
-| none | 13 |
+| none | 12 |
