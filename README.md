@@ -128,8 +128,8 @@ exit                  # worker 0 halts, easysec respawns it a second later
   and the reconciler, `netlink.ex` builds and parses netlink messages, `easysec.ex`
   and `worker.ex` are still placeholders.
 - `dev_tinit/sbexec.c`: the launcher every BEAM starts through. Parent-death
-  signal, cgroup join, bounding-set drop, stdio (console or tty), then a direct
-  exec of `beam.smp`. `sbexec -n` prints the argv it would run.
+  signal, cgroup join, bounding-set drop, seccomp deny list, SELinux context,
+  stdio (console or tty), then a direct exec of `beam.smp`. `sbexec -n` prints the argv it would run.
 - `buildroot/`: upstream Buildroot 2026.02.3 as a submodule. Clone with
   `git clone --recurse-submodules`. Its `output/host` tree bakes in absolute
   paths, so do not move the checkout after building.

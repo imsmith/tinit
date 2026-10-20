@@ -64,7 +64,7 @@ tracks how far it still reaches.
 | cgroups | v2 leaf per worker, joined by sbexec before exec; pids controller only | partial | smoke: `PIDSMAX=128`, `FORKS_BLOCKED` |
 | SELinux | kernel LSM on; `/etc/easysec/policy.cil` compiled by secilc at build (built in post-build.sh against Buildroot's host libsepol), loaded and set enforcing by easysec before any worker starts; trusted base stays kernel_t; workers exec into `-context admin_t|worker_t` via sbexec -x and no_new_privs; enforcing put back if turned off | done | `Easysec.Selinux`, `policy.cil`; smoke: `SELINUX=1 CONTEXT=u:r:admin_t SETENFORCE={:error, :eacces}` |
 | Policy from a declarative store | `/etc/easysec/policy.tcl`, evaluated by tclsh; enforced on the cgroups every 2 s, drift reverted and logged; file changes apply live (pids_max) or by worker restart (caps, console) | done | `Easysec.Enforcer`, `easysec_policy_file_test.exs`, smoke: `PIDSMAX2`, `PIDSMAX3` |
-| Policy granularity below "process" (applet, syscall, device) | | none | |
+| Policy granularity below "process" (syscall, device; "applet" has no meaning without busybox) | `-syscalls_deny {names}` becomes a seccomp filter sbexec installs (EACCES, names from a table generated from asm/unistd_64.h); `-devices {c:MAJ:MIN ...}` becomes a hand-assembled cgroup device program, applied live and enforced each tick | done | `sbexec -s`, `Bpf.device_allow`, `bpf_test.exs`; smoke: `SECCOMP={:error, :eacces} DEVICES={:error, :eperm},true` |
 | Four supervision trees: devices, people, programs, networks | named placeholders | partial | `Sysbeam.Worker.Tree` |
 | Cross-tree dependencies | | none | |
 | ltd and easysec signal each other on runtime config change | not wanted: separate BEAMs with no shared state; ltd owns kernel state, easysec owns worker state; the only link is the sbexec port | n/a | decided 2026-10-20 |
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 28 |
+| done | 29 |
 | partial | 6 |
-| none | 4 |
+| none | 3 |
 | n/a | 1 |
