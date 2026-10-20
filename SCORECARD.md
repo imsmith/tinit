@@ -40,7 +40,7 @@ tracks how far it still reaches.
 | eBPF programs | | none | |
 | Internal bridges | | none | |
 | wireguard config and peer table | | none | |
-| Bootloader state | | none | |
+| Bootloader state | grub2 on the EFI partition; `boot cmdline {...}` in system.tcl is written to grub's environment block and read back, reconciled both ways; a diskless boot reads as no drift | done | `Sysbeam.Ltd.Grubenv`, `ltd_grubenv_test.exs`, smoke: `GRUBENV=true`, second boot `CMDLINE` |
 
 ## ltd: materialized view
 
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 23 |
+| done | 24 |
 | partial | 5 |
-| none | 10 |
+| none | 9 |
 | n/a | 1 |

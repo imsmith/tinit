@@ -111,7 +111,12 @@ exit                  # worker 0 halts, easysec respawns it a second later
 ## Layout
 
 - `configs/x86_64_dev_init_defconfig`: Buildroot config. x86_64, musl, gzip
-  initramfs, QEMU kernel config from upstream plus `dev_tinit/linux.fragment`.
+  initramfs, QEMU kernel config from upstream plus `dev_tinit/linux.fragment`,
+  grub2 for EFI.
+- `dev_tinit/genimage.cfg`, `grub.cfg`, `post-image.sh`: the disk image. One
+  GPT disk, one FAT partition: grub, its config, its environment block, the
+  kernel, the initramfs. grub boots with the command line from the environment
+  block. `run_qemu.sh` boots it with the host's OVMF firmware.
 - `dev_tinit/post-build.sh`: compiles `tinit.c` with the Buildroot toolchain
   and installs it as `/sbin/init`, unzips the pinned Elixir 1.19.6 for OTP 26
   into the host tree, and runs `mix release` into `/usr/lib/sysbeam`.

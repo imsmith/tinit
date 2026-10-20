@@ -122,7 +122,7 @@ defmodule Sysbeam.Ltd.Kernel do
     %{
       hostname: get("kernel.hostname"),
       sysctl: Map.new(sysctl, fn {k, _} -> {k, get(k)} end),
-      boot: with({:error, _} <- Grubenv.read(), do: boot)
+      boot: (case Grubenv.read() do {:ok, env} -> env; _ -> boot end)
     }
   end
 
