@@ -9,7 +9,9 @@ T=buildroot/output/target
   || { echo "FAIL: busybox still on the image"; exit 1; }
 IN=$(mktemp -u); LOG=$(mktemp); mkfifo "$IN"
 exec 3<>"$IN"
-timeout 240 ./run_qemu.sh <"$IN" >"$LOG" 2>&1 &
+# ltd writes grub's environment block on the disk, so boot a copy and keep the build's image clean
+DISK=$(mktemp); cp buildroot/output/images/disk.img "$DISK"; export DISK
+timeout 240 ./run_qemu.sh <"$IN" >"$LOG" 2>&1 & QEMU=$!
 waitfor() { for _ in $(seq 1 90); do [ "$(grep -c "$1" "$LOG")" -ge "$2" ] && return 0; sleep 1; done; echo "FAIL: timeout waiting for '$1' x$2"; tail -30 "$LOG"; exit 1; }
 iex() { printf '%s\n' "$1" >&3; sleep "${2:-2}"; }
 
@@ -30,9 +32,10 @@ iex 'ports = for _ <- 1..200, do: (try do Port.open({:spawn_executable, Path.joi
 iex 'File.write!("/proc/sys/kernel/hostname", "drifted")'
 waitfor "drift: hostname sysbeam-demo -> drifted; config file updated" 1
 iex 'IO.puts("FILE=#{File.read!("/etc/ltd/system.tcl") =~ "hostname drifted"}")'
-# file -> kernel
-iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\n")'
+# file -> kernel, and file -> bootloader: the next boot's command line goes into grub's environment block
+iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\nboot cmdline {console=ttyS0 panic=1 quiet sysbeam.boot=2}\n")'
 waitfor "config file changed, applied" 1
+iex 'IO.puts("GRUBENV=#{File.read!("/boot/EFI/BOOT/grubenv") =~ "cmdline=console=ttyS0 panic=1 quiet sysbeam.boot=2\n"}")'
 iex 'IO.puts("FWD=" <> String.trim(File.read!("/proc/sys/net/ipv4/ip_forward")) <> " HOST=" <> String.trim(File.read!("/proc/sys/kernel/hostname")))'
 # easysec enforces policy on the cgroups: tampering is reverted and logged, never adopted
 iex 'File.write!("/sys/fs/cgroup/easysec/worker-0/pids.max", "999")'
@@ -51,7 +54,14 @@ iex 'IO.puts("CLOCK=#{System.os_time(:second)}")'
 iex 'File.write!("/etc/ltd/system.tcl", "hostname\n")'
 waitfor "config file changed but refused" 1
 iex 'Sysbeam.Sys.reboot(:poweroff)' 3
-exec 3>&-; rm -f "$IN"
+wait "$QEMU" || true
+# second boot: grub read the command line ltd wrote
+timeout 240 ./run_qemu.sh <"$IN" >>"$LOG" 2>&1 & QEMU=$!
+waitfor "iex(1)>" 3; sleep 2
+iex 'IO.puts("CMDLINE=" <> String.trim(File.read!("/proc/cmdline")))'
+iex 'Sysbeam.Sys.reboot(:poweroff)' 3
+wait "$QEMU" || true
+exec 3>&-; rm -f "$IN" "$DISK"
 sed -i 's/\r$//' "$LOG"
 CLOCK=$(sed -n 's/^CLOCK=//p' "$LOG" | tail -1); SKEW=$(( $(date +%s) - ${CLOCK:-0} ))
 [ "${SKEW#-}" -lt 300 ] || { echo "FAIL: guest clock off by ${SKEW}s"; cat "$LOG"; exit 1; }
@@ -60,6 +70,6 @@ grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG"
   && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
   && grep -q "^FILE=true$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
   && grep -q "^PIDSMAX2=128$" "$LOG" && grep -q "^PIDSMAX3=256$" "$LOG" && grep -q "policy file changed but refused" "$LOG" \
-  && grep -q "Power down" "$LOG" \
-  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, clean poweroff"; rm -f "$LOG"; } \
+  && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
+  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG"; } \
   || { echo "FAIL"; cat "$LOG"; exit 1; }

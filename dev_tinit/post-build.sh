@@ -6,6 +6,7 @@ CC=$(ls "$HOST_DIR"/bin/*-buildroot-linux-musl-gcc | head -1)
 "$CC" -static -Os -Wall -o "$TARGET_DIR/sbin/init.tmp" "$HERE/tinit.c"
 rm -f "$TARGET_DIR/sbin/init"
 mv "$TARGET_DIR/sbin/init.tmp" "$TARGET_DIR/sbin/init"
+mkdir -p "$TARGET_DIR/boot" # ltd mounts the EFI partition here for grub's environment block
 
 # Elixir precompiled for the OTP major that Buildroot's erlang package ships (26).
 # Used on the host side only, to build the sysbeam release against Buildroot's host OTP.

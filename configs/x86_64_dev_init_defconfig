@@ -34,3 +34,13 @@ BR2_PACKAGE_TCL=y
 # /init in the cpio is a symlink to tinit, not Buildroot's sh pre-init script.
 # The static table provides /dev/console, /dev/null and /dev/ttyS0; ltd mounts devtmpfs over it.
 BR2_ROOTFS_DEVICE_CREATION_STATIC=y
+
+# Boot: grub2 on the EFI partition of a GPT disk loads the kernel and the initramfs. The kernel
+# command line comes from grub's environment block, which ltd owns at runtime (Sysbeam.Ltd.Grubenv).
+BR2_TARGET_GRUB2=y
+BR2_TARGET_GRUB2_X86_64_EFI=y
+BR2_TARGET_GRUB2_BUILTIN_MODULES_EFI="boot linux fat part_gpt normal efi_gop loadenv"
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_PACKAGE_HOST_DOSFSTOOLS=y
+BR2_PACKAGE_HOST_MTOOLS=y
+BR2_ROOTFS_POST_IMAGE_SCRIPT="../dev_tinit/post-image.sh"

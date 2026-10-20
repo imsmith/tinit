@@ -9,7 +9,8 @@ defmodule Sysbeam.Ltd.Mounts do
     {"cgroup2", "/sys/fs/cgroup", "cgroup2"},
     {"dev", "/dev", "devtmpfs"},
     {"tmp", "/tmp", "tmpfs"},
-    {"run", "/run", "tmpfs"}
+    {"run", "/run", "tmpfs"},
+    {"/dev/vda1", "/boot", "vfat"}
   ]
 
   def child_spec(_), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
@@ -28,7 +29,7 @@ end
 
 defmodule Sysbeam.Ltd.Config do
   @moduledoc """
-  The on-disk config: a Tcl script calling `hostname` and `sysctl`. tclsh
+  The on-disk config: a Tcl script calling `hostname`, `sysctl` and `boot`. tclsh
   evaluates it through priv/ltd/load.tcl, so the file may compute but only
   the resulting settings cross into ltd.
 
@@ -50,10 +51,11 @@ defmodule Sysbeam.Ltd.Config do
     end
   end
 
-  def render(%{hostname: hostname, sysctl: sysctl}) do
+  def render(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
     @header <>
       "hostname #{hostname}\n" <>
-      Enum.map_join(Enum.sort(sysctl), fn {k, v} -> "sysctl #{k} #{v}\n" end)
+      Enum.map_join(Enum.sort(sysctl), fn {k, v} -> "sysctl #{k} #{v}\n" end) <>
+      Enum.map_join(Enum.sort(boot), fn {k, v} -> "boot #{k} {#{v}}\n" end)
   end
 
   def save(state, path \\ @path) do
@@ -69,35 +71,77 @@ defmodule Sysbeam.Ltd.Config do
   defp parse(out) do
     out
     |> String.split("\n", trim: true)
-    |> Enum.reduce(%{hostname: nil, sysctl: %{}}, fn
+    |> Enum.reduce(%{hostname: nil, sysctl: %{}, boot: %{}}, fn
       "hostname " <> name, acc -> %{acc | hostname: name}
       "sysctl " <> kv, acc ->
         [k, v] = String.split(kv, " ", parts: 2)
         put_in(acc, [:sysctl, k], v)
+      "boot " <> kv, acc ->
+        [k, v] = String.split(kv, " ", parts: 2)
+        put_in(acc, [:boot, k], v)
       _, acc -> acc
     end)
   end
 end
 
-defmodule Sysbeam.Ltd.Kernel do
-  @moduledoc "The running system, through /proc/sys. Hostname is just kernel.hostname."
+defmodule Sysbeam.Ltd.Grubenv do
+  @moduledoc """
+  GRUB's environment block: a 1024-byte file, a signature line, `name=value`
+  lines, `#` padding. GRUB's `load_env` reads it at boot, so the kernel command
+  line for the next boot is bootloader state ltd reads and writes here, with no
+  GRUB tooling on the image.
+  """
+  @path "/boot/EFI/BOOT/grubenv"
+  @size 1024
+  @signature "# GRUB Environment Block\n"
 
-  def read(%{sysctl: sysctl}) do
+  def path, do: @path
+
+  def read(path \\ @path) do
+    with {:ok, @signature <> body} <- File.read(path) do
+      lines = for l <- String.split(body, "\n"), not String.starts_with?(l, "#"), [k, v] <- [String.split(l, "=", parts: 2)], do: {k, v}
+      {:ok, Map.new(lines)}
+    end
+  end
+
+  def write(path \\ @path, env) do
+    body = @signature <> Enum.map_join(Enum.sort(env), fn {k, v} -> "#{k}=#{v}\n" end)
+    if byte_size(body) > @size, do: {:error, :too_long}, else: File.write(path, body <> String.duplicate("#", @size - byte_size(body)))
+  end
+end
+
+defmodule Sysbeam.Ltd.Kernel do
+  @moduledoc """
+  The running system: /proc/sys for hostname and sysctl, GRUB's environment
+  block for what the next boot gets. An unreadable block (no disk, no /boot)
+  reads as the view's own boot state, so a diskless boot never drifts.
+  """
+  alias Sysbeam.Ltd.Grubenv
+
+  def read(%{sysctl: sysctl, boot: boot}) do
     %{
       hostname: get("kernel.hostname"),
-      sysctl: Map.new(sysctl, fn {k, _} -> {k, get(k)} end)
+      sysctl: Map.new(sysctl, fn {k, _} -> {k, get(k)} end),
+      boot: with({:error, _} <- Grubenv.read(), do: boot)
     }
   end
 
-  def apply(%{hostname: hostname, sysctl: sysctl}) do
+  def apply(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
     File.write!(proc("kernel.hostname"), hostname)
     for {k, v} <- sysctl, do: File.write!(proc(k), v)
+
+    with {:error, reason} <- Grubenv.write(boot),
+         do: Sysbeam.log("ltd", "bootloader state not written (#{reason})")
+
     :ok
   end
 
   # A config ltd refuses to apply or write: bad hostname, or a sysctl this kernel lacks.
-  def validate(%{hostname: hostname, sysctl: sysctl}) do
+  def validate(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
     cond do
+      bad = Enum.find(boot, fn {k, v} -> k =~ ~r/[=\n]| / or v =~ "\n" end) ->
+        {:error, "bad boot entry #{inspect(bad)}"}
+
       not (is_binary(hostname) and Regex.match?(~r/^[A-Za-z0-9][A-Za-z0-9.-]{0,63}$/, hostname)) ->
         {:error, "bad hostname #{inspect(hostname)}"}
 
@@ -143,7 +187,7 @@ defmodule Sysbeam.ConfigStore do
 
         {:error, reason} ->
           Sysbeam.log("ltd", "config refused (#{reason}); running with kernel state")
-          Kernel.read(%{sysctl: %{}})
+          Kernel.read(%{sysctl: %{}, boot: %{}})
       end
 
     Sysbeam.log("ltd", "running -- config reconciliation loop active")
@@ -204,8 +248,11 @@ defmodule Sysbeam.ConfigStore do
   end
 
   defp diff(a, b) do
-    [hostname: {a.hostname, b.hostname}] ++ Enum.map(a.sysctl, fn {k, v} -> {k, {v, b.sysctl[k]}} end)
-    |> Enum.reject(fn {_, {x, y}} -> x == y end)
-    |> Enum.map_join(", ", fn {k, {x, y}} -> "#{k} #{x} -> #{y}" end)
+    {fa, fb} = {flatten(a), flatten(b)}
+    Enum.map_join(Enum.reject(fa, fn {k, x} -> fb[k] == x end), ", ", fn {k, x} -> "#{k} #{x} -> #{fb[k]}" end)
+  end
+
+  defp flatten(v) do
+    Map.merge(%{"hostname" => v.hostname}, v.sysctl) |> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
   end
 end
