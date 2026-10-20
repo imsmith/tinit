@@ -33,7 +33,7 @@ defmodule Sysbeam.Netlink do
     try do
       with :ok <- Sys.netlink_send(fd, message(type, flags ||| @f_request, payload)), do: collect(fd, [])
     after
-      Sys.netlink_close(fd)
+      Sys.close(fd)
     end
   end
 

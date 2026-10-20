@@ -1,6 +1,6 @@
 defmodule Sysbeam.Sys do
   @moduledoc """
-  mount(2), umount(2), reboot(2), kill(2), finit_module(2), delete_module(2), a raw netlink socket as a NIF (c_src/sysbeam_sys.c), cross-compiled
+  mount(2), umount(2), reboot(2), kill(2), finit_module(2), delete_module(2), a raw netlink socket, bpf(2) as a NIF (c_src/sysbeam_sys.c), cross-compiled
   by post-build.sh into this release's priv/. Target only: on the host the
   .so is absent, the module fails to load, and nothing calls it.
   """
@@ -41,5 +41,15 @@ defmodule Sysbeam.Sys do
   def netlink_send(_fd, _message), do: :erlang.nif_error(:not_loaded)
   @doc "One datagram. `{:ok, binary} | {:error, :eagain}` on timeout."
   def netlink_recv(_fd), do: :erlang.nif_error(:not_loaded)
-  def netlink_close(_fd), do: :erlang.nif_error(:not_loaded)
+
+  @doc "close(2) on any fd this module handed out."
+  def close(_fd), do: :erlang.nif_error(:not_loaded)
+
+  @doc "BPF_PROG_LOAD of raw instructions. `{:ok, fd} | {:error, errno, verifier_log}`."
+  def bpf_prog_load(_prog_type, _insns, _expected_attach_type), do: :erlang.nif_error(:not_loaded)
+  @doc "BPF_PROG_ATTACH of `fd` to the cgroup directory at `path`."
+  def bpf_prog_attach(_fd, _cgroup_path, _attach_type), do: :erlang.nif_error(:not_loaded)
+  def bpf_prog_detach(_cgroup_path, _attach_type), do: :erlang.nif_error(:not_loaded)
+  @doc "BPF_PROG_QUERY: `{:ok, count}` of programs attached at `attach_type`."
+  def bpf_prog_query(_cgroup_path, _attach_type), do: :erlang.nif_error(:not_loaded)
 end

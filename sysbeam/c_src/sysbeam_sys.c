@@ -1,5 +1,5 @@
 /* Sysbeam.Sys: the handful of syscalls ltd needs that Erlang has no API for.
- * mount, umount, reboot, kill, init_module, delete_module, a raw netlink socket. Strings arrive as binaries and are copied into fixed
+ * mount, umount, reboot, kill, init_module, delete_module, a raw netlink socket, bpf. Strings arrive as binaries and are copied into fixed
  * buffers; anything that does not fit is badarg, never truncated. */
 #include <erl_nif.h>
 #include <errno.h>
@@ -11,6 +11,8 @@
 #include <sys/reboot.h>
 #include <sys/socket.h>
 #include <linux/netlink.h>
+#include <linux/bpf.h>
+#include <stdint.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -182,13 +184,106 @@ static ERL_NIF_TERM netlink_recv_nif(ErlNifEnv *env, int argc, const ERL_NIF_TER
 	return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_binary(env, &b));
 }
 
-static ERL_NIF_TERM netlink_close_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+static ERL_NIF_TERM netlink_close_nif( /* any fd this NIF handed out */ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
 	int fd;
 	(void)argc;
 	if (!enif_get_int(env, argv[0], &fd))
 		return enif_make_badarg(env);
 	return result(env, close(fd));
+}
+
+/* bpf(2): load a program from raw instructions, attach, detach and count programs on a cgroup.
+ * The union is from linux/bpf.h, so the layout is the kernel's. */
+static ERL_NIF_TERM bpf_prog_load_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int type, expected, fd, e;
+	ErlNifBinary insns;
+	union bpf_attr attr;
+	static char log[4096];
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &type) || !enif_inspect_binary(env, argv[1], &insns) ||
+	    insns.size == 0 || insns.size % 8 || !enif_get_int(env, argv[2], &expected))
+		return enif_make_badarg(env);
+	memset(&attr, 0, sizeof attr);
+	attr.prog_type = type;
+	attr.insn_cnt = insns.size / 8;
+	attr.insns = (uintptr_t)insns.data;
+	attr.license = (uintptr_t)"GPL";
+	attr.log_level = 1;
+	attr.log_size = sizeof log;
+	attr.log_buf = (uintptr_t)log;
+	attr.expected_attach_type = expected;
+	log[0] = 0;
+	fd = syscall(SYS_bpf, BPF_PROG_LOAD, &attr, sizeof attr);
+	if (fd < 0) {
+		e = errno;
+		return enif_make_tuple3(env, enif_make_atom(env, "error"), errno_atom(env, e),
+					enif_make_string(env, log, ERL_NIF_LATIN1));
+	}
+	return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, fd));
+}
+
+static int cgroup_fd(ErlNifEnv *env, ERL_NIF_TERM path_term)
+{
+	char path[4096];
+	if (!get_str(env, path_term, path, sizeof path))
+		return -2;
+	return open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+}
+
+static ERL_NIF_TERM bpf_cgroup_op(ErlNifEnv *env, int cmd, int prog_fd, ERL_NIF_TERM path_term, int attach_type)
+{
+	union bpf_attr attr;
+	int cg, rc, e;
+	cg = cgroup_fd(env, path_term);
+	if (cg == -2)
+		return enif_make_badarg(env);
+	if (cg < 0)
+		return result(env, -1);
+	memset(&attr, 0, sizeof attr);
+	if (cmd == BPF_PROG_QUERY) {
+		attr.query.target_fd = cg;
+		attr.query.attach_type = attach_type;
+	} else {
+		attr.target_fd = cg;
+		attr.attach_bpf_fd = prog_fd;
+		attr.attach_type = attach_type;
+	}
+	rc = syscall(SYS_bpf, cmd, &attr, sizeof attr);
+	e = errno;
+	close(cg);
+	errno = e;
+	if (rc == 0 && cmd == BPF_PROG_QUERY)
+		return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_uint(env, attr.query.prog_cnt));
+	return result(env, rc);
+}
+
+static ERL_NIF_TERM bpf_prog_attach_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int prog_fd, attach_type;
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &prog_fd) || !enif_get_int(env, argv[2], &attach_type))
+		return enif_make_badarg(env);
+	return bpf_cgroup_op(env, BPF_PROG_ATTACH, prog_fd, argv[1], attach_type);
+}
+
+static ERL_NIF_TERM bpf_prog_detach_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int attach_type;
+	(void)argc;
+	if (!enif_get_int(env, argv[1], &attach_type))
+		return enif_make_badarg(env);
+	return bpf_cgroup_op(env, BPF_PROG_DETACH, 0, argv[0], attach_type);
+}
+
+static ERL_NIF_TERM bpf_prog_query_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int attach_type;
+	(void)argc;
+	if (!enif_get_int(env, argv[1], &attach_type))
+		return enif_make_badarg(env);
+	return bpf_cgroup_op(env, BPF_PROG_QUERY, 0, argv[0], attach_type);
 }
 
 static ErlNifFunc funcs[] = {
@@ -201,7 +296,11 @@ static ErlNifFunc funcs[] = {
 	{"netlink_open", 1, netlink_open_nif, 0},
 	{"netlink_send", 2, netlink_send_nif, 0},
 	{"netlink_recv", 1, netlink_recv_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-	{"netlink_close", 1, netlink_close_nif, 0},
+	{"close", 1, netlink_close_nif, 0},
+	{"bpf_prog_load", 3, bpf_prog_load_nif, 0},
+	{"bpf_prog_attach", 3, bpf_prog_attach_nif, 0},
+	{"bpf_prog_detach", 2, bpf_prog_detach_nif, 0},
+	{"bpf_prog_query", 2, bpf_prog_query_nif, 0},
 };
 
 ERL_NIF_INIT(Elixir.Sysbeam.Sys, funcs, NULL, NULL, NULL, NULL)

@@ -13,8 +13,8 @@ defmodule Sysbeam.Easysec.PolicyFileTest do
 
     assert {:ok,
             %{
-              "0" => %{caps: ["net_admin", "sys_boot"], pids_max: 128, console: "/dev/ttyS0"},
-              "1" => %{caps: [], pids_max: 64}
+              "0" => %{caps: ["net_admin", "sys_boot"], pids_max: 128, net: :allow, console: "/dev/ttyS0"},
+              "1" => %{caps: [], pids_max: 64, net: :allow}
             }} = Policy.load(path)
   end
 
@@ -27,6 +27,20 @@ defmodule Sysbeam.Easysec.PolicyFileTest do
     File.write!(path, "worker 0 -caps\n")
     assert {:error, msg} = Policy.load(path)
     assert msg =~ "worker 0"
+  end
+
+  test "net deny loads; anything else is refused", %{path: path} do
+    File.write!(path, "worker 1 -caps {} -pids_max 64 -net deny\n")
+    assert {:ok, %{"1" => %{net: :deny}}} = Policy.load(path)
+    File.write!(path, "worker 1 -caps {} -pids_max 64 -net maybe\n")
+    assert {:error, msg} = Policy.load(path)
+    assert msg =~ "-net must be allow or deny"
+  end
+
+  test "diff: a net change applies live beside pids_max" do
+    old = %{"0" => %{caps: [], pids_max: 1, net: :allow}}
+    assert Policy.diff(old, %{"0" => %{caps: [], pids_max: 2, net: :deny}}) == [{"0", :pids_max}, {"0", :net}]
+    assert Policy.diff(old, %{"0" => %{caps: ["sys_boot"], pids_max: 1, net: :deny}}) == [{"0", :restart}]
   end
 
   test "a worker without pids_max is refused", %{path: path} do
