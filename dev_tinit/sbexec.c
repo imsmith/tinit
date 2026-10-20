@@ -10,6 +10,8 @@
  *                stdout and stderr /dev/console.
  *   4a. -x CTX   SELinux context for the exec'd BEAM (written to
  *                /proc/self/attr/exec; the policy must allow the transition).
+ *   4b. -s NR,.. seccomp: the listed syscall numbers fail with EACCES for the
+ *                BEAM and everything it spawns. Needs -d (no_new_privs).
  *   5. exec beam.smp with the argv erlexec would build for the release.
  *
  * -n prints the argv and role env and exits: for sbexec_check.sh and for
@@ -25,6 +27,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <linux/audit.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <stddef.h>
 #include <unistd.h>
 
 #ifndef ERTS_VSN
@@ -57,7 +63,7 @@ static void die(const char *what)
 
 static int usage(void)
 {
-	fputs("usage: sbexec [-c CGROUP_DIR] [-d] [-k CAP]... [-t TTY] [-x CONTEXT] [-n] ROLE [INDEX]\n", stderr);
+	fputs("usage: sbexec [-c CGROUP_DIR] [-d] [-k CAP]... [-t TTY] [-x CONTEXT] [-s NR,NR...] [-n] ROLE [INDEX]\n", stderr);
 	return 2;
 }
 
@@ -104,19 +110,50 @@ static void stdio_to(const char *in, const char *out)
 	if (o > 2 && o != i) close(o);
 }
 
+#define MAXDENY 64
+
+/* Classic BPF for seccomp: wrong arch dies; a denied syscall number returns EACCES (not EPERM, so a
+ * capability refusal stays distinguishable); everything else runs. */
+static void seccomp_deny(const char *list)
+{
+	struct sock_filter f[8 + 2 * MAXDENY];
+	int n = 0, denied = 0;
+	char buf[1024];
+	if (snprintf(buf, sizeof buf, "%s", list) >= (int)sizeof buf)
+		die("-s list too long");
+	f[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, arch));
+	f[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0);
+	f[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS);
+	f[n++] = (struct sock_filter)BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr));
+	for (char *tok = strtok(buf, ","); tok; tok = strtok(NULL, ",")) {
+		char *end;
+		long nr = strtol(tok, &end, 10);
+		if (*end || nr < 0 || nr > 1023 || denied == MAXDENY)
+			die("-s: bad syscall number");
+		f[n++] = (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (unsigned)nr, 0, 1);
+		f[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EACCES);
+		denied++;
+	}
+	f[n++] = (struct sock_filter)BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW);
+	struct sock_fprog prog = { .len = (unsigned short)n, .filter = f };
+	if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) < 0)
+		die("PR_SET_SECCOMP");
+}
+
 int main(int argc, char **argv)
 {
-	const char *cgroup = NULL, *tty = NULL, *context = NULL;
+	const char *cgroup = NULL, *tty = NULL, *context = NULL, *deny = NULL;
 	int drop = 0, dry = 0, opt;
 	unsigned long long keep = 0;
 
-	while ((opt = getopt(argc, argv, "c:dk:t:x:n")) != -1) {
+	while ((opt = getopt(argc, argv, "c:dk:t:x:s:n")) != -1) {
 		switch (opt) {
 		case 'c': cgroup = optarg; break;
 		case 'd': drop = 1; break;
 		case 'k': keep |= 1ULL << cap_index(optarg); break;
 		case 't': tty = optarg; break;
 		case 'x': context = optarg; break;
+		case 's': deny = optarg; break;
 		case 'n': dry = 1; break;
 		default: return usage();
 		}
@@ -125,6 +162,10 @@ int main(int argc, char **argv)
 		return usage();
 	if (keep && !drop) {
 		fputs("sbexec: -k without -d keeps everything; say -d\n", stderr);
+		return 2;
+	}
+	if (deny && !drop) {
+		fputs("sbexec: -s needs no_new_privs; say -d\n", stderr);
 		return 2;
 	}
 	const char *role = argv[optind];
@@ -174,6 +215,8 @@ int main(int argc, char **argv)
 				die("PR_CAPBSET_DROP");
 		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
 			die("PR_SET_NO_NEW_PRIVS");
+		if (deny)
+			seccomp_deny(deny);
 	}
 
 	if (context)

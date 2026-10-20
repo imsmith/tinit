@@ -29,6 +29,18 @@ defmodule Sysbeam.Easysec.PolicyFileTest do
     assert msg =~ "worker 0"
   end
 
+  test "syscall names become numbers; unknown names and malformed devices are refused", %{path: path} do
+    File.write!(path, "worker 0 -caps {} -pids_max 1 -syscalls_deny {delete_module mount} -devices {c:1:3 c:4:64}\nworker 1 -caps {} -pids_max 1 -devices {}\n")
+    assert {:ok, %{"0" => %{syscalls_deny: [176, 165], devices: [{1, 3}, {4, 64}]}, "1" => %{devices: []}}} = Policy.load(path)
+    assert "0" |> then(fn _ -> Policy.exec(%{caps: [], pids_max: 1, syscalls_deny: [176, 165]}, "/cg", ["worker", "0"]) end) == ["-c", "/cg", "-d", "-s", "176,165", "worker", "0"]
+    File.write!(path, "worker 0 -caps {} -pids_max 1 -syscalls_deny {frobnicate}\n")
+    assert {:error, msg} = Policy.load(path)
+    assert msg =~ "unknown syscall frobnicate"
+    File.write!(path, "worker 0 -caps {} -pids_max 1 -devices {null}\n")
+    assert {:error, msg} = Policy.load(path)
+    assert msg =~ "c:MAJOR:MINOR"
+  end
+
   test "net deny loads; anything else is refused", %{path: path} do
     File.write!(path, "worker 1 -caps {} -pids_max 64 -net deny\n")
     assert {:ok, %{"1" => %{net: :deny}}} = Policy.load(path)

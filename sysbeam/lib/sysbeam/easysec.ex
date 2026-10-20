@@ -8,7 +8,9 @@ defmodule Sysbeam.Easysec.Policy do
   bounding set before exec, so nothing in the worker can get them back.
   `pids_max` caps the worker's cgroup; `net deny` attaches an eBPF program to
   the cgroup that drops everything it sends; `context` is the SELinux domain
-  sbexec execs the worker into. tclsh evaluates the file through
+  sbexec execs the worker into; `syscalls_deny` is a seccomp filter sbexec
+  installs (EACCES); `devices` is an allow-list of c:MAJOR:MINOR enforced by
+  an eBPF program on the cgroup's device hook. tclsh evaluates the file through
   priv/easysec/load.tcl, so it may compute but only the result crosses into
   easysec. The policy in memory is the authority: easysec enforces it on the
   cgroups and never adopts drift from them.
@@ -33,6 +35,7 @@ defmodule Sysbeam.Easysec.Policy do
     ["-c", cgroup, "-d"] ++
       Enum.flat_map(keep, &["-k", &1]) ++
       if(policy[:context], do: ["-x", "u:r:#{policy.context}"], else: []) ++
+      if(policy[:syscalls_deny], do: ["-s", Enum.join(policy.syscalls_deny, ",")], else: []) ++
       if(policy[:console], do: ["-t", policy.console], else: []) ++
       args
   end
@@ -42,7 +45,7 @@ defmodule Sysbeam.Easysec.Policy do
   `:pids_max` and `:net` apply live, `:restart` (caps or console changed)
   kills and respawns the worker, `:stop` and `:start` for workers gone and new.
   """
-  @live [:pids_max, :net]
+  @live [:pids_max, :net, :devices]
 
   def diff(old, new) do
     for index <- Enum.sort(Enum.uniq(Map.keys(old) ++ Map.keys(new))),
@@ -55,12 +58,17 @@ defmodule Sysbeam.Easysec.Policy do
   defp changes(a, b) when a == b, do: []
   defp changes(a, b), do: if(Map.drop(a, @live) == Map.drop(b, @live), do: for(k <- @live, a[k] != b[k], do: k), else: [:restart])
 
+  defp devices("none"), do: []
+  defp devices(csv), do: for(d <- String.split(csv, ","), [_type, major, minor] = String.split(d, ":"), do: {String.to_integer(major), String.to_integer(minor)})
+
   defp parse(out) do
     for "worker " <> rest <- String.split(out, "\n", trim: true), into: %{} do
       [index | kv] = String.split(rest, " ")
       %{"caps" => caps, "pids_max" => pids_max, "net" => net} = opts = Map.new(Enum.chunk_every(kv, 2), fn [k, v] -> {k, v} end)
       policy = %{caps: String.split(caps, ",", trim: true), pids_max: String.to_integer(pids_max), net: String.to_existing_atom(net)}
       policy = if opts["context"], do: Map.put(policy, :context, opts["context"]), else: policy
+      policy = if opts["syscalls_deny"], do: Map.put(policy, :syscalls_deny, Enum.map(String.split(opts["syscalls_deny"], ","), &String.to_integer/1)), else: policy
+      policy = if opts["devices"], do: Map.put(policy, :devices, devices(opts["devices"])), else: policy
       {index, if(opts["console"], do: Map.put(policy, :console, opts["console"]), else: policy)}
     end
   end
@@ -167,6 +175,7 @@ defmodule Sysbeam.Easysec.Enforcer do
 
   defp apply_change({index, :pids_max}, new), do: File.write!(Cgroup.pids_max_path(index), Integer.to_string(new[index].pids_max))
   defp apply_change({index, :net}, new), do: net(index, new[index])
+  defp apply_change({index, :devices}, new), do: devices(index, new[index])
   defp apply_change({index, :stop}, _), do: stop_worker(index)
   defp apply_change({index, :start}, new), do: start_worker(index, new[index])
   defp apply_change({index, :restart}, new), do: (stop_worker(index); start_worker(index, new[index]))
@@ -183,6 +192,7 @@ defmodule Sysbeam.Easysec.Enforcer do
   def worker_spec(index, policy) do
     cgroup = Cgroup.setup!("worker-#{index}", policy)
     net(index, policy)
+    devices(index, policy)
     Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}, net #{policy[:net] || :allow}, context #{policy[:context] || "kernel_t"}")
 
     Supervisor.child_spec(
@@ -202,17 +212,22 @@ defmodule Sysbeam.Easysec.Enforcer do
       Selinux.enforce!()
     end
 
-    for {index, worker} <- policy, {:ok, n} = Bpf.attached(Cgroup.dir(index), Bpf.egress()), n != wanted(worker) do
-      Sysbeam.log("easysec", "violation: worker #{index} net programs #{n} -> #{wanted(worker)}")
-      net(index, worker)
+    for {index, worker} <- policy, {hook, wanted, fix} <- [{Bpf.egress(), wanted_net(worker), &net/2}, {Bpf.device(), wanted_devices(worker), &devices/2}],
+        {:ok, n} = Bpf.attached(Cgroup.dir(index), hook), n != wanted do
+      Sysbeam.log("easysec", "violation: worker #{index} hook #{hook} programs #{n} -> #{wanted}")
+      fix.(index, worker)
     end
   end
 
-  defp wanted(%{net: :deny}), do: 1
-  defp wanted(_), do: 0
+  defp wanted_net(%{net: :deny}), do: 1
+  defp wanted_net(_), do: 0
+  defp wanted_devices(%{devices: list}) when is_list(list), do: 1
+  defp wanted_devices(_), do: 0
 
-  defp net(index, %{net: :deny}), do: :ok = Bpf.attach(Cgroup.dir(index), Bpf.egress(), Bpf.drop())
+  defp net(index, %{net: :deny}), do: :ok = Bpf.attach(Cgroup.dir(index), Bpf.egress(), Bpf.cgroup_skb(), Bpf.drop())
   defp net(index, _), do: Bpf.detach(Cgroup.dir(index), Bpf.egress())
+  defp devices(index, %{devices: list}) when is_list(list), do: :ok = Bpf.attach(Cgroup.dir(index), Bpf.device(), Bpf.cgroup_device(), Bpf.device_allow(list))
+  defp devices(index, _), do: Bpf.detach(Cgroup.dir(index), Bpf.device())
 
   defp mtime do
     case File.stat(Policy.path(), time: :posix) do

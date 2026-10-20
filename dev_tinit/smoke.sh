@@ -32,6 +32,8 @@ iex 'IO.puts("BEAMS=#{Enum.count(File.ls!("/proc"), fn p -> p =~ ~r/^\d+$/ and F
 iex 'IO.puts("MODULES=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "virtio_rng", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
 # SELinux: easysec loaded the policy and is enforcing; worker 0 runs as admin_t and may not flip it
 iex 'IO.puts("SELINUX=" <> String.trim(File.read!("/sys/fs/selinux/enforce")) <> " CONTEXT=" <> String.trim(File.read!("/proc/self/attr/current"), <<0>>) <> " SETENFORCE=#{inspect(File.write("/sys/fs/selinux/enforce", "0"))}")'
+# below process: a denied syscall fails with EACCES (seccomp), a device not on the allow-list with EPERM (cgroup device program)
+iex 'IO.puts("SECCOMP=#{inspect(Sysbeam.Sys.delete_module("nope"))} DEVICES=#{inspect(File.open("/dev/full", [:write]))},#{match?({:ok, _}, File.open("/dev/null"))}")'
 # the random pool must be seeded (virtio-rng, loaded as a module by ltd) or wireguard drops every handshake
 iex 'IO.puts("ENTROPY=" <> String.trim(File.read!("/proc/sys/kernel/random/entropy_avail")))'
 # wireguard: A ships with wg0, its key, an address and B as peer; B rewrites itself as the other end, then
@@ -72,7 +74,7 @@ iex 'File.write!("/sys/fs/cgroup/easysec/worker-0/pids.max", "999")'
 waitfor "violation: worker 0 pids.max 999 -> 128" 1
 iex 'IO.puts("PIDSMAX2=" <> String.trim(File.read!("/sys/fs/cgroup/easysec/worker-0/pids.max")))'
 # a policy file change applies: pids_max live, caps by restarting that worker
-iex 'File.write!("/etc/easysec/policy.tcl", "worker 0 -caps {net_admin sys_boot} -pids_max 256 -net deny -context admin_t -console /dev/ttyS0\nworker 1 -caps {sys_boot} -pids_max 64 -context worker_t\n")'
+iex 'File.write!("/etc/easysec/policy.tcl", "worker 0 -caps {net_admin sys_boot} -pids_max 256 -net deny -context admin_t -syscalls_deny {delete_module} -devices {c:1:3 c:1:5 c:1:9 c:4:64 c:5:1} -console /dev/ttyS0\nworker 1 -caps {sys_boot} -pids_max 64 -context worker_t\n")'
 waitfor "policy file changed, applied: worker 0 pids_max, worker 0 net, worker 1 restart" 1
 # net deny: an eBPF program on the worker's cgroup refuses everything it sends
 iex '{:ok, u} = :gen_udp.open(0, [:binary]); IO.puts("NETDENY=#{inspect(:gen_udp.send(u, {127, 0, 0, 1}, 5555, "x"))}")'
@@ -104,6 +106,6 @@ grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG"
   && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
   && grep -q "^FILE=true " "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
   && grep -q "^PIDSMAX2=128$" "$LOG" && grep -q "^PIDSMAX3=256$" "$LOG" && grep -q "^NETDENY={:error, :eperm}$" "$LOG" && grep -q "policy file changed but refused" "$LOG" \
-  && grep -q "^BRIDGE=\[\"eth0\"\] UP=1$" "$LOG" && grep -q "^SELINUX=1 CONTEXT=u:r:admin_t SETENFORCE={:error, :eacces}$" "$LOG" && grep -q "^ENTROPY=256$" "$LOG" && grep -q "^TUNNEL=hello from B$" "$LOG" && grep -q "^WG2=false$" "$LOG" && grep -q "^BRIDGE2=false,true MASTER=false$" "$LOG" && grep -q "^MODULES=bridge,udp_tunnel,virtio_rng,wireguard$" "$LOG" && grep -q "^MODULES2=bridge,virtio_rng$" "$LOG" && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
-  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, eBPF net deny enforced, SELinux enforcing with worker domains, clock within ${SKEW}s of host, modules loaded and unloaded with dependencies, bridge built and replaced over rtnetlink, wireguard tunnel to a second VM carried TCP, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG" "$LOGB"; } \
+  && grep -q "^BRIDGE=\[\"eth0\"\] UP=1$" "$LOG" && grep -q "^SELINUX=1 CONTEXT=u:r:admin_t SETENFORCE={:error, :eacces}$" "$LOG" && grep -q "^SECCOMP={:error, :eacces} DEVICES={:error, :eperm},true$" "$LOG" && grep -q "^ENTROPY=256$" "$LOG" && grep -q "^TUNNEL=hello from B$" "$LOG" && grep -q "^WG2=false$" "$LOG" && grep -q "^BRIDGE2=false,true MASTER=false$" "$LOG" && grep -q "^MODULES=bridge,udp_tunnel,virtio_rng,wireguard$" "$LOG" && grep -q "^MODULES2=bridge,virtio_rng$" "$LOG" && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
+  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, eBPF net deny enforced, SELinux enforcing with worker domains, seccomp and device allow-list below process, clock within ${SKEW}s of host, modules loaded and unloaded with dependencies, bridge built and replaced over rtnetlink, wireguard tunnel to a second VM carried TCP, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG" "$LOGB"; } \
   || { echo "FAIL"; cat "$LOG"; echo "---- VM B"; cat "$LOGB"; exit 1; }
