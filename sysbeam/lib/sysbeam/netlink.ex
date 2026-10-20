@@ -232,8 +232,14 @@ defmodule Sysbeam.Netlink.Wireguard do
 
   defp peer(a) do
     allowed = for ip <- NL.items(a[@p_allowedips]), ip[@ip_family] == <<@af_inet::16-native>>, <<cidr>> = ip[@ip_cidr], do: "#{Link.ip(ip[@ip_addr])}/#{cidr}"
-    endpoint = with <<@af_inet::16-native, port::16-big, ip::binary-size(4), _::binary>> <- a[@p_endpoint], do: "#{Link.ip(ip)}:#{port}"
-    keepalive = with <<k::16-native>> when k > 0 <- a[@p_keepalive], do: k
+    endpoint = case a[@p_endpoint] do
+      <<@af_inet::16-native, port::16-big, ip::binary-size(4), _::binary>> -> "#{Link.ip(ip)}:#{port}"
+      _ -> nil
+    end
+    keepalive = case a[@p_keepalive] do
+      <<k::16-native>> when k > 0 -> k
+      _ -> nil
+    end
     {Base.encode64(a[@p_public_key]), %{allowed: Enum.sort(allowed), endpoint: endpoint, keepalive: keepalive}}
   end
 
