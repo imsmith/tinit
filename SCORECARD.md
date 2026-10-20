@@ -38,7 +38,7 @@ tracks how far it still reaches.
 | Kernel params and modules | bridge, veth, wireguard built as modules; `module NAME` in system.tcl loaded with dependencies from modules.dep via finit_module, unloaded when dropped, hand-loaded modules adopted; unknown names refuse the file | done | `Sysbeam.Ltd.Modules`, `ltd_modules_test.exs`, smoke: `MODULES=bridge,udp_tunnel,wireguard`, `MODULES2=bridge` |
 | System clock | kernel sets it from CMOS at boot (x86 `read_persistent_clock`); no RTC driver, no userland | done | smoke: `CLOCK` within 300 s of host |
 | eBPF programs | | none | |
-| Internal bridges | | none | |
+| Internal bridges | `bridge NAME PORT...` in system.tcl; ltd builds and deletes bridges and moves ports over rtnetlink (raw netlink socket in the NIF, messages built in Elixir), reconciled both ways against the link dump; unknown ports refuse the file | done | `Sysbeam.Netlink`, `Sysbeam.Ltd.Bridges`, `netlink_test.exs`, smoke: `BRIDGE=["eth0"] UP=1`, `BRIDGE2=false,true MASTER=false` |
 | wireguard config and peer table | | none | |
 | Bootloader state | grub2 on the EFI partition; `boot cmdline {...}` in system.tcl is written to grub's environment block and read back, reconciled both ways; a diskless boot reads as no drift | done | `Sysbeam.Ltd.Grubenv`, `ltd_grubenv_test.exs`, smoke: `GRUBENV=true`, second boot `CMDLINE` |
 
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 25 |
+| done | 26 |
 | partial | 5 |
-| none | 8 |
+| none | 7 |
 | n/a | 1 |
