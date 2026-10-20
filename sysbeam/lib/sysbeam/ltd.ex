@@ -242,8 +242,9 @@ defmodule Sysbeam.Ltd.Addresses do
     index = Map.new(links, &{&1.name, &1.index})
 
     for l <- Enum.uniq(Map.keys(desired) ++ Map.keys(current)), i = index[l] do
-      for c <- (desired[l] || []) -- (current[l] || []), do: Link.add_address(i, c)
+      # delete first: removing a primary address takes its secondaries in the same subnet with it
       for c <- (current[l] || []) -- (desired[l] || []), do: Link.del_address(i, c)
+      for c <- (desired[l] || []) -- (current[l] || []), do: Link.add_address(i, c)
     end
 
     :ok
