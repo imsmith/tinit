@@ -35,7 +35,7 @@ tracks how far it still reaches.
 | Mounts and filesystems | proc, sysfs, cgroup2, devtmpfs, tmpfs x2 via `Sysbeam.Sys.mount` NIF | done | `Sysbeam.Ltd.Mounts`, `c_src/sysbeam_sys.c` |
 | Hostname | reconciled both ways | done | e977438, smoke: drift and apply |
 | sysctl | reconciled both ways | done | e977438, smoke: `FWD=0` |
-| Kernel params and modules | kernel built without modules | none | |
+| Kernel params and modules | bridge, veth, wireguard built as modules; `module NAME` in system.tcl loaded with dependencies from modules.dep via finit_module, unloaded when dropped, hand-loaded modules adopted; unknown names refuse the file | done | `Sysbeam.Ltd.Modules`, `ltd_modules_test.exs`, smoke: `MODULES=bridge,udp_tunnel,wireguard`, `MODULES2=bridge` |
 | System clock | kernel sets it from CMOS at boot (x86 `read_persistent_clock`); no RTC driver, no userland | done | smoke: `CLOCK` within 300 s of host |
 | eBPF programs | | none | |
 | Internal bridges | | none | |
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 24 |
+| done | 25 |
 | partial | 5 |
-| none | 9 |
+| none | 8 |
 | n/a | 1 |
