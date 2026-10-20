@@ -23,7 +23,7 @@ waitfor "iex(1)>" 1; sleep 2
 # VM B: same image, driven on its own console; it becomes the peer by rewriting its key and config
 INB=$(mktemp -u); LOGB=$(mktemp); mkfifo "$INB"; exec 4<>"$INB"
 DISKB=$(mktemp); cp buildroot/output/images/disk.img "$DISKB"
-DISK=$DISKB NETDEV="socket,connect=127.0.0.1:$PORT" timeout 240 ./run_qemu.sh <"$INB" >"$LOGB" 2>&1 & QEMUB=$!
+DISK=$DISKB NETDEV="socket,connect=127.0.0.1:$PORT" MAC=52:54:00:12:34:57 timeout 240 ./run_qemu.sh <"$INB" >"$LOGB" 2>&1 & QEMUB=$!
 waitforb() { for _ in $(seq 1 90); do [ "$(grep -c "$1" "$LOGB")" -ge "$2" ] && return 0; sleep 1; done; echo "FAIL: B timeout waiting for '$1' x$2"; tail -30 "$LOGB"; exit 1; }
 iexb() { printf '%s\n' "$1" >&4; sleep "${2:-2}"; }
 # four BEAMs: ltd, easysec, worker 0, worker 1
