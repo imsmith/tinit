@@ -24,6 +24,7 @@ defmodule Sysbeam.Application do
   defp children("ltd", _) do
     [
       Sysbeam.Ltd.Mounts,
+      Sysbeam.Ltd.Loopback,
       Sysbeam.ConfigStore,
       {Sysbeam.Tier, role: "easysec"}
     ]

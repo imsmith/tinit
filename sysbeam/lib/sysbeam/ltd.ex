@@ -28,6 +28,16 @@ defmodule Sysbeam.Ltd.Mounts do
   end
 end
 
+defmodule Sysbeam.Ltd.Loopback do
+  @moduledoc "ltd's second job: lo up. Nothing else on the box would do it."
+  def child_spec(_), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
+
+  def start_link do
+    with {:error, e} <- Sysbeam.Netlink.Link.up("lo"), do: Sysbeam.log("ltd", "lo not up (errno #{e})")
+    :ignore
+  end
+end
+
 defmodule Sysbeam.Ltd.Config do
   @moduledoc """
   The on-disk config: a Tcl script calling `hostname`, `sysctl`, `module`, `bridge`,

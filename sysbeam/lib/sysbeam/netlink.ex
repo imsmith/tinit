@@ -155,6 +155,9 @@ defmodule Sysbeam.Netlink.Link do
 
   def delete(name), do: ack(NL.request(@rtm_dellink, NL.f_ack(), NL.ifinfomsg(0, 0, 0) <> NL.attr(@ifla_ifname, NL.string(name))))
 
+  @doc "Bring `name` up."
+  def up(name), do: ack(NL.request(@rtm_newlink, NL.f_ack(), NL.ifinfomsg(0, @iff_up, @iff_up) <> NL.attr(@ifla_ifname, NL.string(name))))
+
   @doc "Enslave `name` to the link at `master_index` (0 releases it) and bring it up."
   def set_master(name, master_index) do
     payload = NL.ifinfomsg(0, @iff_up, @iff_up) <> NL.attr(@ifla_ifname, NL.string(name)) <> NL.attr(@ifla_master, <<master_index::32-native>>)
