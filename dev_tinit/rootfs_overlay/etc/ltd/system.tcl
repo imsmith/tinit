@@ -3,6 +3,7 @@ hostname sysbeam-demo
 sysctl kernel.panic 10
 sysctl net.ipv4.ip_forward 1
 module bridge
+module virtio_rng
 module wireguard
 bridge br0 eth0
 wireguard wg0 -port 51820 -key /etc/ltd/wg0.key

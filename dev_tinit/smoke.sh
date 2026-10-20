@@ -29,12 +29,14 @@ iexb() { printf '%s\n' "$1" >&4; sleep "${2:-2}"; }
 # four BEAMs: ltd, easysec, worker 0, worker 1
 iex 'IO.puts("BEAMS=#{Enum.count(File.ls!("/proc"), fn p -> p =~ ~r/^\d+$/ and File.read("/proc/#{p}/comm") == {:ok, "beam.smp\n"} end)}")'
 # ltd loaded the declared modules, with their dependencies
-iex 'IO.puts("MODULES=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
+iex 'IO.puts("MODULES=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "virtio_rng", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
+# the random pool must be seeded (virtio-rng, loaded as a module by ltd) or wireguard drops every handshake
+iex 'IO.puts("ENTROPY=" <> String.trim(File.read!("/proc/sys/kernel/random/entropy_avail")))'
 # wireguard: A ships with wg0, its key, an address and B as peer; B rewrites itself as the other end, then
 # A opens a TCP connection to B's tunnel address. No ping on the box: a connected socket is the proof.
 waitforb "iex(1)>" 1; sleep 2
 iexb "File.write!(\"/etc/ltd/wg0.key\", \"$BK\\n\")"
-iexb "File.write!(\"/etc/ltd/system.tcl\", \"hostname peer-b\\nmodule bridge\\nmodule wireguard\\nbridge br0 eth0\\nwireguard wg0 -port 51820 -key /etc/ltd/wg0.key\\npeer wg0 $AP -allowed {10.0.0.1/32} -endpoint 192.168.7.1:51820\\naddress br0 192.168.7.2/24\\naddress wg0 10.0.0.2/24\\nboot cmdline {console=ttyS0 panic=1 quiet}\\n\")"
+iexb "File.write!(\"/etc/ltd/system.tcl\", \"hostname peer-b\\nmodule bridge\\nmodule virtio_rng\\nmodule wireguard\\nbridge br0 eth0\\nwireguard wg0 -port 51820 -key /etc/ltd/wg0.key\\npeer wg0 $AP -allowed {10.0.0.1/32} -endpoint 192.168.7.1:51820\\naddress br0 192.168.7.2/24\\naddress wg0 10.0.0.2/24\\nboot cmdline {console=ttyS0 panic=1 quiet}\\n\")"
 waitforb "config file changed, applied" 1
 iexb '{:ok, l} = :gen_tcp.listen(7777, ip: {10, 0, 0, 2}, active: false); spawn(fn -> {:ok, s} = :gen_tcp.accept(l); :gen_tcp.send(s, "hello from B\n") end); IO.puts("LISTENING")'
 waitforb "LISTENING" 1
@@ -56,11 +58,11 @@ iex 'File.write!("/proc/sys/kernel/hostname", "drifted")'
 waitfor "drift: hostname sysbeam-demo -> drifted; config file updated" 1
 iex 'IO.puts("FILE=#{File.read!("/etc/ltd/system.tcl") =~ "hostname drifted"}")'
 # file -> kernel, and file -> bootloader: the next boot's command line goes into grub's environment block
-iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\nmodule bridge\nbridge br1\nboot cmdline {console=ttyS0 panic=1 quiet sysbeam.boot=2}\n")'
+iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\nmodule bridge\nmodule virtio_rng\nbridge br1\nboot cmdline {console=ttyS0 panic=1 quiet sysbeam.boot=2}\n")'
 waitfor "config file changed, applied" 1
 iex 'IO.puts("WG2=#{File.exists?("/sys/class/net/wg0")}")'
 iex 'IO.puts("BRIDGE2=#{File.exists?("/sys/class/net/br0")},#{File.exists?("/sys/class/net/br1")} MASTER=#{File.exists?("/sys/class/net/eth0/master")}")'
-iex 'IO.puts("MODULES2=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
+iex 'IO.puts("MODULES2=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "virtio_rng", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
 iex 'IO.puts("GRUBENV=#{File.read!("/boot/EFI/BOOT/grubenv") =~ "cmdline=console=ttyS0 panic=1 quiet sysbeam.boot=2\n"}")'
 iex 'IO.puts("FWD=" <> String.trim(File.read!("/proc/sys/net/ipv4/ip_forward")) <> " HOST=" <> String.trim(File.read!("/proc/sys/kernel/hostname")))'
 # easysec enforces policy on the cgroups: tampering is reverted and logged, never adopted
@@ -98,6 +100,6 @@ grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG"
   && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
   && grep -q "^FILE=true$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
   && grep -q "^PIDSMAX2=128$" "$LOG" && grep -q "^PIDSMAX3=256$" "$LOG" && grep -q "policy file changed but refused" "$LOG" \
-  && grep -q "^BRIDGE=\[\"eth0\"\] UP=1$" "$LOG" && grep -q "^TUNNEL=hello from B$" "$LOG" && grep -q "^WG2=false$" "$LOG" && grep -q "^BRIDGE2=false,true MASTER=false$" "$LOG" && grep -q "^MODULES=bridge,udp_tunnel,wireguard$" "$LOG" && grep -q "^MODULES2=bridge$" "$LOG" && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
+  && grep -q "^BRIDGE=\[\"eth0\"\] UP=1$" "$LOG" && grep -q "^ENTROPY=256$" "$LOG" && grep -q "^TUNNEL=hello from B$" "$LOG" && grep -q "^WG2=false$" "$LOG" && grep -q "^BRIDGE2=false,true MASTER=false$" "$LOG" && grep -q "^MODULES=bridge,udp_tunnel,virtio_rng,wireguard$" "$LOG" && grep -q "^MODULES2=bridge,virtio_rng$" "$LOG" && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
   && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, modules loaded and unloaded with dependencies, bridge built and replaced over rtnetlink, wireguard tunnel to a second VM carried TCP, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG" "$LOGB"; } \
   || { echo "FAIL"; cat "$LOG"; echo "---- VM B"; cat "$LOGB"; exit 1; }
