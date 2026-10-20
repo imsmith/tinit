@@ -29,6 +29,9 @@ BR2_PACKAGE_ERLANG=y
 
 # ltd config files are Tcl; ltd evaluates them with tclsh
 BR2_PACKAGE_TCL=y
+
+# host-libsepol (via host-checkpolicy) for secilc, which post-build.sh builds to compile the CIL policy
+BR2_PACKAGE_HOST_CHECKPOLICY=y
 # BR2_PACKAGE_TCL_SHLIB_ONLY is not set
 
 # /init in the cpio is a symlink to tinit, not Buildroot's sh pre-init script.

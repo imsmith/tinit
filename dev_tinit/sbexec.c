@@ -8,6 +8,8 @@
  *                ones, then no_new_privs. Without -d, nothing is dropped.
  *   4. -t TTY    stdio on TTY (IEx console). Otherwise stdin /dev/null,
  *                stdout and stderr /dev/console.
+ *   4a. -x CTX   SELinux context for the exec'd BEAM (written to
+ *                /proc/self/attr/exec; the policy must allow the transition).
  *   5. exec beam.smp with the argv erlexec would build for the release.
  *
  * -n prints the argv and role env and exits: for sbexec_check.sh and for
@@ -55,7 +57,7 @@ static void die(const char *what)
 
 static int usage(void)
 {
-	fputs("usage: sbexec [-c CGROUP_DIR] [-d] [-k CAP]... [-t TTY] [-n] ROLE [INDEX]\n", stderr);
+	fputs("usage: sbexec [-c CGROUP_DIR] [-d] [-k CAP]... [-t TTY] [-x CONTEXT] [-n] ROLE [INDEX]\n", stderr);
 	return 2;
 }
 
@@ -104,16 +106,17 @@ static void stdio_to(const char *in, const char *out)
 
 int main(int argc, char **argv)
 {
-	const char *cgroup = NULL, *tty = NULL;
+	const char *cgroup = NULL, *tty = NULL, *context = NULL;
 	int drop = 0, dry = 0, opt;
 	unsigned long long keep = 0;
 
-	while ((opt = getopt(argc, argv, "c:dk:t:n")) != -1) {
+	while ((opt = getopt(argc, argv, "c:dk:t:x:n")) != -1) {
 		switch (opt) {
 		case 'c': cgroup = optarg; break;
 		case 'd': drop = 1; break;
 		case 'k': keep |= 1ULL << cap_index(optarg); break;
 		case 't': tty = optarg; break;
+		case 'x': context = optarg; break;
 		case 'n': dry = 1; break;
 		default: return usage();
 		}
@@ -172,6 +175,9 @@ int main(int argc, char **argv)
 		if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
 			die("PR_SET_NO_NEW_PRIVS");
 	}
+
+	if (context)
+		write_str("/proc/self/attr/exec", context);
 
 	if (tty)
 		stdio_to(tty, NULL);

@@ -9,7 +9,7 @@ defmodule Sysbeam.Application do
   a tier's subtree is a child of its supervisor like everything else.
   """
   use Application
-  alias Sysbeam.Easysec.{Enforcer, Policy}
+  alias Sysbeam.Easysec.{Enforcer, Policy, Selinux}
 
   @impl true
   def start(_type, _args) do
@@ -32,6 +32,8 @@ defmodule Sysbeam.Application do
   # A refused policy starts no workers: a security policy with no valid declaration must not guess.
   # The enforcer keeps watching the file, so a fixed file brings the workers up.
   defp children("easysec", _) do
+    Selinux.load()
+
     policy =
       case Policy.load() do
         {:ok, policy} -> policy

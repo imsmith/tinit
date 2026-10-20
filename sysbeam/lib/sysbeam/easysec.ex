@@ -7,7 +7,8 @@ defmodule Sysbeam.Easysec.Policy do
   `caps` is an allow-list: sbexec drops every other capability from the
   bounding set before exec, so nothing in the worker can get them back.
   `pids_max` caps the worker's cgroup; `net deny` attaches an eBPF program to
-  the cgroup that drops everything it sends. tclsh evaluates the file through
+  the cgroup that drops everything it sends; `context` is the SELinux domain
+  sbexec execs the worker into. tclsh evaluates the file through
   priv/easysec/load.tcl, so it may compute but only the result crosses into
   easysec. The policy in memory is the authority: easysec enforces it on the
   cgroups and never adopts drift from them.
@@ -31,6 +32,7 @@ defmodule Sysbeam.Easysec.Policy do
   def exec(%{caps: keep} = policy, cgroup, args) do
     ["-c", cgroup, "-d"] ++
       Enum.flat_map(keep, &["-k", &1]) ++
+      if(policy[:context], do: ["-x", "u:r:#{policy.context}"], else: []) ++
       if(policy[:console], do: ["-t", policy.console], else: []) ++
       args
   end
@@ -55,13 +57,11 @@ defmodule Sysbeam.Easysec.Policy do
 
   defp parse(out) do
     for "worker " <> rest <- String.split(out, "\n", trim: true), into: %{} do
-      [index, "caps", caps, "pids_max", pids_max, "net", net | console] = String.split(rest, " ")
+      [index | kv] = String.split(rest, " ")
+      %{"caps" => caps, "pids_max" => pids_max, "net" => net} = opts = Map.new(Enum.chunk_every(kv, 2), fn [k, v] -> {k, v} end)
       policy = %{caps: String.split(caps, ",", trim: true), pids_max: String.to_integer(pids_max), net: String.to_existing_atom(net)}
-
-      case console do
-        ["console", tty] -> {index, Map.put(policy, :console, tty)}
-        [] -> {index, policy}
-      end
+      policy = if opts["context"], do: Map.put(policy, :context, opts["context"]), else: policy
+      {index, if(opts["console"], do: Map.put(policy, :console, opts["console"]), else: policy)}
     end
   end
 end
@@ -86,6 +86,36 @@ defmodule Sysbeam.Easysec.Cgroup do
   end
 end
 
+defmodule Sysbeam.Easysec.Selinux do
+  @moduledoc """
+  Loads the compiled policy (/etc/easysec/policy.bin, from policy.cil at
+  build time) and switches to enforcing, before any worker starts. A kernel
+  without SELinux (no /sys/fs/selinux) is logged and skipped.
+  """
+  @fs "/sys/fs/selinux"
+  @policy "/etc/easysec/policy.bin"
+
+  def load do
+    cond do
+      not File.exists?(Path.join(@fs, "load")) -> Sysbeam.log("easysec", "selinux: no #{@fs}; policy not loaded")
+      true ->
+        File.write!(Path.join(@fs, "load"), File.read!(@policy))
+        File.write!(Path.join(@fs, "enforce"), "1")
+        Sysbeam.log("easysec", "selinux: policy loaded, enforcing")
+    end
+  end
+
+  @doc "`\"1\"` when enforcing, `\"0\"` when permissive, nil without SELinux."
+  def enforcing do
+    case File.read(Path.join(@fs, "enforce")) do
+      {:ok, v} -> String.trim(v)
+      _ -> nil
+    end
+  end
+
+  def enforce!, do: File.write!(Path.join(@fs, "enforce"), "1")
+end
+
 defmodule Sysbeam.Easysec.Enforcer do
   @moduledoc """
   Keeps the running workers equal to the policy. Every tick: a changed policy
@@ -93,12 +123,12 @@ defmodule Sysbeam.Easysec.Enforcer do
   by killing and respawning the worker, new and gone workers started and
   stopped); then each worker's cgroup is checked against policy (pids.max,
   the egress program) and any deviation is logged as a violation and
-  rewritten. A file that fails to load
+  rewritten; so is SELinux enforcing mode. A file that fails to load
   is refused and the previous policy stays in force.
   """
   use GenServer
   alias Sysbeam.Bpf
-  alias Sysbeam.Easysec.{Cgroup, Policy}
+  alias Sysbeam.Easysec.{Cgroup, Policy, Selinux}
 
   @tick_ms 2_000
 
@@ -153,7 +183,7 @@ defmodule Sysbeam.Easysec.Enforcer do
   def worker_spec(index, policy) do
     cgroup = Cgroup.setup!("worker-#{index}", policy)
     net(index, policy)
-    Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}, net #{policy[:net] || :allow}")
+    Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}, net #{policy[:net] || :allow}, context #{policy[:context] || "kernel_t"}")
 
     Supervisor.child_spec(
       {Sysbeam.Tier, role: "worker", index: index, args: Policy.exec(policy, cgroup, ["worker", index])},
@@ -165,6 +195,11 @@ defmodule Sysbeam.Easysec.Enforcer do
     for {index, %{pids_max: max}} <- policy, path = Cgroup.pids_max_path(index), (running = String.trim(File.read!(path))) != Integer.to_string(max) do
       Sysbeam.log("easysec", "violation: worker #{index} pids.max #{running} -> #{max}")
       File.write!(path, Integer.to_string(max))
+    end
+
+    if Selinux.enforcing() == "0" do
+      Sysbeam.log("easysec", "violation: selinux permissive -> enforcing")
+      Selinux.enforce!()
     end
 
     for {index, worker} <- policy, {:ok, n} = Bpf.attached(Cgroup.dir(index), Bpf.egress()), n != wanted(worker) do

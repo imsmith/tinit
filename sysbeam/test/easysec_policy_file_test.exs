@@ -9,11 +9,11 @@ defmodule Sysbeam.Easysec.PolicyFileTest do
   end
 
   test "loads one worker per line with caps, pids_max and optional console", %{path: path} do
-    File.write!(path, "worker 0 -caps {net_admin sys_boot} -pids_max 128 -console /dev/ttyS0\nworker 1 -caps {} -pids_max 64\n")
+    File.write!(path, "worker 0 -caps {net_admin sys_boot} -pids_max 128 -context admin_t -console /dev/ttyS0\nworker 1 -caps {} -pids_max 64\n")
 
     assert {:ok,
             %{
-              "0" => %{caps: ["net_admin", "sys_boot"], pids_max: 128, net: :allow, console: "/dev/ttyS0"},
+              "0" => %{caps: ["net_admin", "sys_boot"], pids_max: 128, net: :allow, context: "admin_t", console: "/dev/ttyS0"},
               "1" => %{caps: [], pids_max: 64, net: :allow}
             }} = Policy.load(path)
   end

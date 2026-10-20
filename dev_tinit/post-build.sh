@@ -25,6 +25,23 @@ if [ ! -x "$HOST_DIR/elixir/bin/mix" ]; then
 	unzip -q "$ZIP" 'bin/*' 'lib/*' -d "$HOST_DIR/elixir"
 fi
 
+# secilc: the CIL compiler, built here against Buildroot's host libsepol (same 3.9), compiles
+# /etc/easysec/policy.cil into the binary policy easysec loads at boot.
+SECILC_VER=3.9
+SECILC_SHA=c53fb7218ac158c05f28de186e48404857eb191bd4f9415802f85449fdf6da7f
+STGZ="$BASE_DIR/../dl/secilc-$SECILC_VER.tar.gz"
+if [ ! -f "$STGZ" ]; then
+	wget -q -O "$STGZ" "https://github.com/SELinuxProject/selinux/releases/download/$SECILC_VER/secilc-$SECILC_VER.tar.gz"
+fi
+echo "$SECILC_SHA  $STGZ" | sha256sum -c - >/dev/null
+if [ ! -x "$HOST_DIR/bin/secilc" ]; then
+	rm -rf "$BUILD_DIR/secilc-src"; mkdir -p "$BUILD_DIR/secilc-src"
+	tar xzf "$STGZ" -C "$BUILD_DIR/secilc-src" --strip-components=1
+	"${HOSTCC:-gcc}" -O1 -I"$HOST_DIR/include" -L"$HOST_DIR/lib" -Wl,-rpath,"$HOST_DIR/lib" \
+		-o "$HOST_DIR/bin/secilc" "$BUILD_DIR/secilc-src/secilc.c" -lsepol
+fi
+"$HOST_DIR/bin/secilc" -o "$TARGET_DIR/etc/easysec/policy.bin" -f /dev/null "$TARGET_DIR/etc/easysec/policy.cil"
+
 # sysbeam release: BEAM bytecode is portable, ERTS comes from the target's erlang package.
 rm -rf "$TARGET_DIR/usr/lib/sysbeam" "$TARGET_DIR/usr/lib/elixir"
 (cd "$HERE/../sysbeam" && \
