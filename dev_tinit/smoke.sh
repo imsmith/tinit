@@ -18,6 +18,8 @@ iex() { printf '%s\n' "$1" >&3; sleep "${2:-2}"; }
 waitfor "iex(1)>" 1; sleep 2
 # four BEAMs: ltd, easysec, worker 0, worker 1
 iex 'IO.puts("BEAMS=#{Enum.count(File.ls!("/proc"), fn p -> p =~ ~r/^\d+$/ and File.read("/proc/#{p}/comm") == {:ok, "beam.smp\n"} end)}")'
+# ltd loaded the declared modules, with their dependencies
+iex 'IO.puts("MODULES=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
 # halt the worker: easysec respawns it and a fresh IEx comes up
 iex 'System.halt(0)'
 waitfor "iex(1)>" 2; sleep 2
@@ -33,8 +35,9 @@ iex 'File.write!("/proc/sys/kernel/hostname", "drifted")'
 waitfor "drift: hostname sysbeam-demo -> drifted; config file updated" 1
 iex 'IO.puts("FILE=#{File.read!("/etc/ltd/system.tcl") =~ "hostname drifted"}")'
 # file -> kernel, and file -> bootloader: the next boot's command line goes into grub's environment block
-iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\nboot cmdline {console=ttyS0 panic=1 quiet sysbeam.boot=2}\n")'
+iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\nmodule bridge\nboot cmdline {console=ttyS0 panic=1 quiet sysbeam.boot=2}\n")'
 waitfor "config file changed, applied" 1
+iex 'IO.puts("MODULES2=" <> (File.read!("/proc/modules") |> String.split("\n", trim: true) |> Enum.map(&hd(String.split(&1, " "))) |> Enum.filter(&(&1 in ["bridge", "wireguard", "udp_tunnel"])) |> Enum.sort() |> Enum.join(",")))'
 iex 'IO.puts("GRUBENV=#{File.read!("/boot/EFI/BOOT/grubenv") =~ "cmdline=console=ttyS0 panic=1 quiet sysbeam.boot=2\n"}")'
 iex 'IO.puts("FWD=" <> String.trim(File.read!("/proc/sys/net/ipv4/ip_forward")) <> " HOST=" <> String.trim(File.read!("/proc/sys/kernel/hostname")))'
 # easysec enforces policy on the cgroups: tampering is reverted and logged, never adopted
@@ -70,6 +73,6 @@ grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG"
   && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
   && grep -q "^FILE=true$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
   && grep -q "^PIDSMAX2=128$" "$LOG" && grep -q "^PIDSMAX3=256$" "$LOG" && grep -q "policy file changed but refused" "$LOG" \
-  && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
-  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG"; } \
+  && grep -q "^MODULES=bridge,udp_tunnel,wireguard$" "$LOG" && grep -q "^MODULES2=bridge$" "$LOG" && grep -q "^GRUBENV=true$" "$LOG" && grep -q "^CMDLINE=.*sysbeam.boot=2" "$LOG" && [ "$(grep -c "Power down" "$LOG")" = 2 ] \
+  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, modules loaded and unloaded with dependencies, bootloader state written and booted from, clean poweroff x2"; rm -f "$LOG"; } \
   || { echo "FAIL"; cat "$LOG"; exit 1; }

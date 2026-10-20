@@ -2,7 +2,7 @@ defmodule Sysbeam.Ltd.ConfigTest do
   use ExUnit.Case
   alias Sysbeam.Ltd.Config
 
-  @view %{hostname: "roundtrip", sysctl: %{"kernel.panic" => "10", "net.ipv4.ip_forward" => "1"}, boot: %{"cmdline" => "console=ttyS0 panic=1 quiet"}}
+  @view %{hostname: "roundtrip", sysctl: %{"kernel.panic" => "10", "net.ipv4.ip_forward" => "1"}, modules: ["bridge", "wireguard"], boot: %{"cmdline" => "console=ttyS0 panic=1 quiet"}}
 
   setup do
     path = Path.join(System.tmp_dir!(), "ltd-test-#{System.unique_integer([:positive])}.tcl")
@@ -14,12 +14,13 @@ defmodule Sysbeam.Ltd.ConfigTest do
     assert :ok = Config.save(@view, path)
     assert {:ok, @view} = Config.load(path)
     assert File.read!(path) =~ "hostname roundtrip\n"
+    assert File.read!(path) =~ "module bridge\nmodule wireguard\n"
     assert File.read!(path) =~ "boot cmdline {console=ttyS0 panic=1 quiet}\n"
   end
 
   test "config is real Tcl: computed values load", %{path: path} do
     File.write!(path, "set n 4\nhostname host[expr {$n * 2}]\nsysctl kernel.panic $n\n")
-    assert {:ok, %{hostname: "host8", sysctl: %{"kernel.panic" => "4"}, boot: %{}}} = Config.load(path)
+    assert {:ok, %{hostname: "host8", sysctl: %{"kernel.panic" => "4"}, modules: [], boot: %{}}} = Config.load(path)
   end
 
   test "a file that does not evaluate is an error, not a crash", %{path: path} do

@@ -1,13 +1,15 @@
 /* Sysbeam.Sys: the handful of syscalls ltd needs that Erlang has no API for.
- * mount, umount, reboot, kill. Strings arrive as binaries and are copied into fixed
+ * mount, umount, reboot, kill, init_module, delete_module. Strings arrive as binaries and are copied into fixed
  * buffers; anything that does not fit is badarg, never truncated. */
 #include <erl_nif.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static ERL_NIF_TERM errno_atom(ErlNifEnv *env, int e)
@@ -21,6 +23,8 @@ static ERL_NIF_TERM errno_atom(ErlNifEnv *env, int e)
 	case ENODEV: return enif_make_atom(env, "enodev");
 	case ENOTDIR: return enif_make_atom(env, "enotdir");
 	case ENOTBLK: return enif_make_atom(env, "enotblk");
+	case EEXIST: return enif_make_atom(env, "eexist");
+	case ENOEXEC: return enif_make_atom(env, "enoexec");
 	default: {
 		char buf[16];
 		snprintf(buf, sizeof buf, "errno_%d", e);
@@ -92,11 +96,40 @@ static ERL_NIF_TERM kill_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
 	return result(env, kill(pid, sig));
 }
 
+/* finit_module(2) on an opened .ko; musl has no wrapper. EEXIST means already loaded. */
+static ERL_NIF_TERM init_module_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	char path[4096];
+	int fd, rc, e;
+	(void)argc;
+	if (!get_str(env, argv[0], path, sizeof path))
+		return enif_make_badarg(env);
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return result(env, -1);
+	rc = syscall(SYS_finit_module, fd, "", 0);
+	e = errno;
+	close(fd);
+	errno = e;
+	return result(env, rc);
+}
+
+static ERL_NIF_TERM delete_module_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	char name[64];
+	(void)argc;
+	if (!get_str(env, argv[0], name, sizeof name))
+		return enif_make_badarg(env);
+	return result(env, syscall(SYS_delete_module, name, O_NONBLOCK)); /* EBUSY if in use */
+}
+
 static ErlNifFunc funcs[] = {
 	{"mount", 5, mount_nif, 0},
 	{"umount", 1, umount_nif, 0},
 	{"reboot", 1, reboot_nif, 0},
 	{"kill", 2, kill_nif, 0},
+	{"init_module", 1, init_module_nif, 0},
+	{"delete_module", 1, delete_module_nif, 0},
 };
 
 ERL_NIF_INIT(Elixir.Sysbeam.Sys, funcs, NULL, NULL, NULL, NULL)

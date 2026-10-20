@@ -3,5 +3,6 @@
 # the wire. Usage: tclsh load.tcl /etc/ltd/system.tcl
 proc hostname {name} { puts "hostname $name" }
 proc sysctl {key value} { puts "sysctl $key $value" }
+proc module {name} { puts "module $name" }
 proc boot {key value} { puts "boot $key $value" }
 source [lindex $argv 0]

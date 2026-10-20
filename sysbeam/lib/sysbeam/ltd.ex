@@ -29,7 +29,7 @@ end
 
 defmodule Sysbeam.Ltd.Config do
   @moduledoc """
-  The on-disk config: a Tcl script calling `hostname`, `sysctl` and `boot`. tclsh
+  The on-disk config: a Tcl script calling `hostname`, `sysctl`, `module` and `boot`. tclsh
   evaluates it through priv/ltd/load.tcl, so the file may compute but only
   the resulting settings cross into ltd.
 
@@ -51,10 +51,11 @@ defmodule Sysbeam.Ltd.Config do
     end
   end
 
-  def render(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
+  def render(%{hostname: hostname, sysctl: sysctl, modules: modules, boot: boot}) do
     @header <>
       "hostname #{hostname}\n" <>
       Enum.map_join(Enum.sort(sysctl), fn {k, v} -> "sysctl #{k} #{v}\n" end) <>
+      Enum.map_join(modules, fn m -> "module #{m}\n" end) <>
       Enum.map_join(Enum.sort(boot), fn {k, v} -> "boot #{k} {#{v}}\n" end)
   end
 
@@ -71,17 +72,67 @@ defmodule Sysbeam.Ltd.Config do
   defp parse(out) do
     out
     |> String.split("\n", trim: true)
-    |> Enum.reduce(%{hostname: nil, sysctl: %{}, boot: %{}}, fn
+    |> Enum.reduce(%{hostname: nil, sysctl: %{}, modules: [], boot: %{}}, fn
       "hostname " <> name, acc -> %{acc | hostname: name}
       "sysctl " <> kv, acc ->
         [k, v] = String.split(kv, " ", parts: 2)
         put_in(acc, [:sysctl, k], v)
+      "module " <> name, acc -> %{acc | modules: Enum.sort([name | acc.modules])}
       "boot " <> kv, acc ->
         [k, v] = String.split(kv, " ", parts: 2)
         put_in(acc, [:boot, k], v)
       _, acc -> acc
     end)
   end
+end
+
+defmodule Sysbeam.Ltd.Modules do
+  @moduledoc """
+  Kernel modules. modules.dep (depmod ran at build) gives each module's
+  dependencies; finit_module loads them in order and delete_module unloads
+  them, the module first. /proc/modules says what is loaded; a loaded module
+  nothing else uses is one ltd declares, its dependencies come and go with it.
+  """
+  alias Sysbeam.Sys
+
+  def dir, do: "/lib/modules/" <> String.trim(File.read!("/proc/sys/kernel/osrelease"))
+
+  @doc "Paths under the modules dir to load for `name`, dependencies first; nil if unknown."
+  def load_order(depfile, name) do
+    Enum.find_value(String.split(depfile, "\n", trim: true), fn line ->
+      with [path, deps] <- String.split(line, ":", parts: 2),
+           true <- modname(path) == name,
+           do: Enum.reverse(String.split(deps, " ", trim: true)) ++ [path]
+    end)
+  end
+
+  def known?(name), do: load_order(depfile(), name) != nil
+
+  def load(name) do
+    case load_order(depfile(), name) do
+      nil -> {:error, :unknown_module}
+      paths -> Enum.find_value(paths, :ok, &failed(Sys.init_module(Path.join(dir(), &1))))
+    end
+  end
+
+  def unload(name) do
+    for path <- Enum.reverse(load_order(depfile(), name) || []), do: Sys.delete_module(modname(path))
+    if name in loaded(), do: {:error, :ebusy}, else: :ok
+  end
+
+  @doc "Loaded modules nothing else uses, from /proc/modules."
+  def loaded do
+    for line <- String.split(File.read!("/proc/modules"), "\n", trim: true),
+        [name, _size, "0", "-" | _] <- [String.split(line, " ")],
+        do: name
+  end
+
+  defp failed(:ok), do: nil
+  defp failed({:error, :eexist}), do: nil
+  defp failed(error), do: error
+  defp depfile, do: File.read!(Path.join(dir(), "modules.dep"))
+  # the kernel's name for a module: file name without .ko, dashes as underscores
+  defp modname(path), do: path |> Path.basename(".ko") |> String.replace("-", "_")
 end
 
 defmodule Sysbeam.Ltd.Grubenv do
@@ -116,19 +167,24 @@ defmodule Sysbeam.Ltd.Kernel do
   block for what the next boot gets. An unreadable block (no disk, no /boot)
   reads as the view's own boot state, so a diskless boot never drifts.
   """
-  alias Sysbeam.Ltd.Grubenv
+  alias Sysbeam.Ltd.{Grubenv, Modules}
 
   def read(%{sysctl: sysctl, boot: boot}) do
     %{
       hostname: get("kernel.hostname"),
+      modules: Enum.sort(Modules.loaded()),
       sysctl: Map.new(sysctl, fn {k, _} -> {k, get(k)} end),
       boot: (case Grubenv.read() do {:ok, env} -> env; _ -> boot end)
     }
   end
 
-  def apply(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
+  def apply(%{hostname: hostname, sysctl: sysctl, modules: modules, boot: boot}) do
     File.write!(proc("kernel.hostname"), hostname)
     for {k, v} <- sysctl, do: File.write!(proc(k), v)
+
+    loaded = Modules.loaded()
+    for m <- modules -- loaded, {:error, r} <- [Modules.load(m)], do: Sysbeam.log("ltd", "module #{m} not loaded (#{r})")
+    for m <- loaded -- modules, {:error, r} <- [Modules.unload(m)], do: Sysbeam.log("ltd", "module #{m} not unloaded (#{r})")
 
     with {:error, reason} <- Grubenv.write(boot),
          do: Sysbeam.log("ltd", "bootloader state not written (#{reason})")
@@ -137,8 +193,11 @@ defmodule Sysbeam.Ltd.Kernel do
   end
 
   # A config ltd refuses to apply or write: bad hostname, or a sysctl this kernel lacks.
-  def validate(%{hostname: hostname, sysctl: sysctl, boot: boot}) do
+  def validate(%{hostname: hostname, sysctl: sysctl, modules: modules, boot: boot}) do
     cond do
+      unknown = Enum.find(modules, &(not Modules.known?(&1))) ->
+        {:error, "unknown module #{unknown}"}
+
       bad = Enum.find(boot, fn {k, v} -> k =~ ~r/[=\n]| / or v =~ "\n" end) ->
         {:error, "bad boot entry #{inspect(bad)}"}
 
@@ -187,7 +246,7 @@ defmodule Sysbeam.ConfigStore do
 
         {:error, reason} ->
           Sysbeam.log("ltd", "config refused (#{reason}); running with kernel state")
-          Kernel.read(%{sysctl: %{}, boot: %{}})
+          Kernel.read(%{sysctl: %{}, modules: [], boot: %{}})
       end
 
     Sysbeam.log("ltd", "running -- config reconciliation loop active")
@@ -253,6 +312,9 @@ defmodule Sysbeam.ConfigStore do
   end
 
   defp flatten(v) do
-    Map.merge(%{"hostname" => v.hostname}, v.sysctl) |> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
+    Map.merge(%{"hostname" => v.hostname}, v.sysctl)
+    |> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
+    |> Map.merge(Map.new(v.modules, &{"module #{&1}", "loaded"}))
+|> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
   end
 end
