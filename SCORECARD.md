@@ -59,7 +59,7 @@ tracks how far it still reaches.
 
 | Want | Have | Status | Evidence |
 | --- | --- | --- | --- |
-| Everything that runs comes through easysec | workers yes; ltd and easysec themselves are ungoverned | partial | 8aa539b |
+| Everything that runs comes through easysec | every worker does; kernel, tinit, ltd and easysec are the trusted base and are not governed by design | done | 8aa539b, decided 2026-10-20 |
 | Capabilities | bounding set dropped by sbexec via prctl before exec, no_new_privs | done | smoke: `CAPBND=0000000000401000`, `MOUNT={:error, :eperm}` |
 | cgroups | v2 leaf per worker, joined by sbexec before exec; pids controller only | partial | smoke: `PIDSMAX=128`, `FORKS_BLOCKED` |
 | SELinux | kernel has no LSM | none | |
@@ -67,7 +67,7 @@ tracks how far it still reaches.
 | Policy granularity below "process" (applet, syscall, device) | | none | |
 | Four supervision trees: devices, people, programs, networks | named placeholders | partial | `Sysbeam.Worker.Tree` |
 | Cross-tree dependencies | | none | |
-| ltd and easysec signal each other on runtime config change | | none | |
+| ltd and easysec signal each other on runtime config change | not wanted: separate BEAMs with no shared state; ltd owns kernel state, easysec owns worker state; the only link is the sbexec port | n/a | decided 2026-10-20 |
 
 ## busybox
 
@@ -86,6 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 22 |
-| partial | 6 |
-| none | 11 |
+| done | 23 |
+| partial | 5 |
+| none | 10 |
+| n/a | 1 |
