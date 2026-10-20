@@ -36,9 +36,9 @@ waitforb "iex(1)>" 1; sleep 2
 iexb "File.write!(\"/etc/ltd/wg0.key\", \"$BK\\n\")"
 iexb "File.write!(\"/etc/ltd/system.tcl\", \"hostname peer-b\\nmodule bridge\\nmodule wireguard\\nbridge br0 eth0\\nwireguard wg0 -port 51820 -key /etc/ltd/wg0.key\\npeer wg0 $AP -allowed {10.0.0.1/32} -endpoint 192.168.7.1:51820\\naddress br0 192.168.7.2/24\\naddress wg0 10.0.0.2/24\\nboot cmdline {console=ttyS0 panic=1 quiet}\\n\")"
 waitforb "config file changed, applied" 1
-iexb '{:ok, l} = :gen_tcp.listen(7, ip: {10, 0, 0, 2}, active: false); spawn(fn -> {:ok, s} = :gen_tcp.accept(l); :gen_tcp.send(s, "hello from B\n") end); IO.puts("LISTENING")'
+iexb '{:ok, l} = :gen_tcp.listen(7777, ip: {10, 0, 0, 2}, active: false); spawn(fn -> {:ok, s} = :gen_tcp.accept(l); :gen_tcp.send(s, "hello from B\n") end); IO.puts("LISTENING")'
 waitforb "LISTENING" 1
-iex 'IO.puts("TUNNEL=" <> (with {:ok, s} <- :gen_tcp.connect({10, 0, 0, 2}, 7, [active: false], 10_000), {:ok, d} <- :gen_tcp.recv(s, 0, 5_000), do: String.trim(to_string(d)), else: (e -> inspect(e))))' 8
+iex 'IO.puts("TUNNEL=" <> (with {:ok, s} <- :gen_tcp.connect({10, 0, 0, 2}, 7777, [active: false], 10_000), {:ok, d} <- :gen_tcp.recv(s, 0, 5_000), do: String.trim(to_string(d)), else: (e -> inspect(e))))' 8
 # ltd built the bridge over rtnetlink and enslaved eth0
 iex 'IO.puts("BRIDGE=#{inspect(File.ls!("/sys/class/net/br0/brif"))} UP=#{Bitwise.band(String.to_integer(String.trim_leading(String.trim(File.read!("/sys/class/net/br0/flags")), "0x"), 16), 1)}")'
 # halt the worker: easysec respawns it and a fresh IEx comes up
