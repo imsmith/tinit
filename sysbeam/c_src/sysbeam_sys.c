@@ -1,5 +1,5 @@
 /* Sysbeam.Sys: the handful of syscalls ltd needs that Erlang has no API for.
- * mount, umount, reboot, kill, init_module, delete_module. Strings arrive as binaries and are copied into fixed
+ * mount, umount, reboot, kill, init_module, delete_module, a raw netlink socket. Strings arrive as binaries and are copied into fixed
  * buffers; anything that does not fit is badarg, never truncated. */
 #include <erl_nif.h>
 #include <errno.h>
@@ -9,6 +9,8 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -24,6 +26,7 @@ static ERL_NIF_TERM errno_atom(ErlNifEnv *env, int e)
 	case ENOTDIR: return enif_make_atom(env, "enotdir");
 	case ENOTBLK: return enif_make_atom(env, "enotblk");
 	case EEXIST: return enif_make_atom(env, "eexist");
+	case EAGAIN: return enif_make_atom(env, "eagain");
 	case ENOEXEC: return enif_make_atom(env, "enoexec");
 	default: {
 		char buf[16];
@@ -123,6 +126,71 @@ static ERL_NIF_TERM delete_module_nif(ErlNifEnv *env, int argc, const ERL_NIF_TE
 	return result(env, syscall(SYS_delete_module, name, O_NONBLOCK)); /* EBUSY if in use */
 }
 
+/* netlink: one raw socket per request, opened and closed from Elixir, which builds the messages.
+ * recv runs on a dirty scheduler with a 2 s receive timeout, so a silent kernel cannot stall a VM
+ * scheduler. */
+static ERL_NIF_TERM netlink_open_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int proto, fd, e;
+	struct sockaddr_nl sa = { .nl_family = AF_NETLINK };
+	struct timeval tv = { 2, 0 };
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &proto))
+		return enif_make_badarg(env);
+	fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, proto);
+	if (fd < 0)
+		return result(env, -1);
+	if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0 ||
+	    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) < 0) {
+		e = errno;
+		close(fd);
+		errno = e;
+		return result(env, -1);
+	}
+	return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, fd));
+}
+
+static ERL_NIF_TERM netlink_send_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int fd;
+	ErlNifBinary b;
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &fd) || !enif_inspect_binary(env, argv[1], &b))
+		return enif_make_badarg(env);
+	return result(env, send(fd, b.data, b.size, 0) < 0 ? -1 : 0);
+}
+
+static ERL_NIF_TERM netlink_recv_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int fd, e;
+	ssize_t n;
+	ErlNifBinary b;
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &fd) || !enif_alloc_binary(65536, &b))
+		return enif_make_badarg(env);
+	n = recv(fd, b.data, b.size, 0);
+	if (n < 0) {
+		e = errno;
+		enif_release_binary(&b);
+		errno = e;
+		return result(env, -1);
+	}
+	if (!enif_realloc_binary(&b, (size_t)n)) {
+		enif_release_binary(&b);
+		return enif_make_badarg(env);
+	}
+	return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_binary(env, &b));
+}
+
+static ERL_NIF_TERM netlink_close_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int fd;
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &fd))
+		return enif_make_badarg(env);
+	return result(env, close(fd));
+}
+
 static ErlNifFunc funcs[] = {
 	{"mount", 5, mount_nif, 0},
 	{"umount", 1, umount_nif, 0},
@@ -130,6 +198,10 @@ static ErlNifFunc funcs[] = {
 	{"kill", 2, kill_nif, 0},
 	{"init_module", 1, init_module_nif, 0},
 	{"delete_module", 1, delete_module_nif, 0},
+	{"netlink_open", 1, netlink_open_nif, 0},
+	{"netlink_send", 2, netlink_send_nif, 0},
+	{"netlink_recv", 1, netlink_recv_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+	{"netlink_close", 1, netlink_close_nif, 0},
 };
 
 ERL_NIF_INIT(Elixir.Sysbeam.Sys, funcs, NULL, NULL, NULL, NULL)

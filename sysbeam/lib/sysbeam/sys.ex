@@ -1,6 +1,6 @@
 defmodule Sysbeam.Sys do
   @moduledoc """
-  mount(2), umount(2), reboot(2), kill(2), finit_module(2), delete_module(2) as a NIF (c_src/sysbeam_sys.c), cross-compiled
+  mount(2), umount(2), reboot(2), kill(2), finit_module(2), delete_module(2), a raw netlink socket as a NIF (c_src/sysbeam_sys.c), cross-compiled
   by post-build.sh into this release's priv/. Target only: on the host the
   .so is absent, the module fails to load, and nothing calls it.
   """
@@ -35,4 +35,11 @@ defmodule Sysbeam.Sys do
 
   @doc "delete_module(name, O_NONBLOCK). `{:error, :ebusy}` while something uses it."
   def delete_module(_name), do: :erlang.nif_error(:not_loaded)
+
+  @doc "A raw netlink socket for `protocol` (0 is NETLINK_ROUTE), bound, 2 s receive timeout. `{:ok, fd}`."
+  def netlink_open(_protocol), do: :erlang.nif_error(:not_loaded)
+  def netlink_send(_fd, _message), do: :erlang.nif_error(:not_loaded)
+  @doc "One datagram. `{:ok, binary} | {:error, :eagain}` on timeout."
+  def netlink_recv(_fd), do: :erlang.nif_error(:not_loaded)
+  def netlink_close(_fd), do: :erlang.nif_error(:not_loaded)
 end

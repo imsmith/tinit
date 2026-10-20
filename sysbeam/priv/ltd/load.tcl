@@ -4,5 +4,6 @@
 proc hostname {name} { puts "hostname $name" }
 proc sysctl {key value} { puts "sysctl $key $value" }
 proc module {name} { puts "module $name" }
+proc bridge {name args} { puts "bridge $name $args" }
 proc boot {key value} { puts "boot $key $value" }
 source [lindex $argv 0]

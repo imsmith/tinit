@@ -4,4 +4,5 @@ sysctl kernel.panic 10
 sysctl net.ipv4.ip_forward 1
 module bridge
 module wireguard
+bridge br0 eth0
 boot cmdline {console=ttyS0 panic=1 quiet}
