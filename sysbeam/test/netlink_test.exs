@@ -19,6 +19,18 @@ defmodule Sysbeam.NetlinkTest do
     assert byte_size(p) == 16
   end
 
+  test "nested attributes carry the NESTED flag out and lose it on the way in; items are positional" do
+    nest = NL.nest(8, [NL.nest(0, [NL.attr(1, "k")]), NL.nest(0, [NL.attr(1, "j")])])
+    assert <<_::16, 0x8008::16-native, _::binary>> = nest
+    assert NL.items(NL.attrs(nest)[8]) == [%{1 => "k"}, %{1 => "j"}]
+  end
+
+  test "addresses and endpoints round-trip through their wire forms" do
+    alias Sysbeam.Netlink.Link
+    assert Link.parse_cidr("10.0.0.1/24") == {<<10, 0, 0, 1>>, 24}
+    assert Link.ip(<<192, 168, 7, 2>>) == "192.168.7.2"
+  end
+
   test "an odd-length payload is padded in the stream, not in the payload" do
     [{1, 0, "abc"}] = NL.parse(NL.message(1, 0, "abc") <> <<0>>)
   end

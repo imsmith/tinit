@@ -29,7 +29,8 @@ end
 
 defmodule Sysbeam.Ltd.Config do
   @moduledoc """
-  The on-disk config: a Tcl script calling `hostname`, `sysctl`, `module`, `bridge` and `boot`. tclsh
+  The on-disk config: a Tcl script calling `hostname`, `sysctl`, `module`, `bridge`,
+  `wireguard`, `peer`, `address` and `boot`. tclsh
   evaluates it through priv/ltd/load.tcl, so the file may compute but only
   the resulting settings cross into ltd.
 
@@ -51,12 +52,20 @@ defmodule Sysbeam.Ltd.Config do
     end
   end
 
-  def render(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, boot: boot}) do
+  def render(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, wireguard: wireguard, addresses: addresses, boot: boot}) do
     @header <>
       "hostname #{hostname}\n" <>
       Enum.map_join(Enum.sort(sysctl), fn {k, v} -> "sysctl #{k} #{v}\n" end) <>
       Enum.map_join(modules, fn m -> "module #{m}\n" end) <>
       Enum.map_join(Enum.sort(bridges), fn {b, ports} -> "bridge #{Enum.join([b | ports], " ")}\n" end) <>
+      Enum.map_join(Enum.sort(wireguard), fn {w, dev} ->
+        "wireguard #{w} -port #{dev.port} -key #{dev.key}\n" <>
+          Enum.map_join(Enum.sort(dev.peers), fn {pub, p} ->
+            "peer #{w} #{pub} -allowed {#{Enum.join(p.allowed, " ")}}" <>
+              if(p.endpoint, do: " -endpoint #{p.endpoint}", else: "") <> if(p.keepalive, do: " -keepalive #{p.keepalive}", else: "") <> "\n"
+          end)
+      end) <>
+      Enum.map_join(Enum.sort(addresses), fn {l, cidrs} -> Enum.map_join(cidrs, &"address #{l} #{&1}\n") end) <>
       Enum.map_join(Enum.sort(boot), fn {k, v} -> "boot #{k} {#{v}}\n" end)
   end
 
@@ -73,7 +82,7 @@ defmodule Sysbeam.Ltd.Config do
   defp parse(out) do
     out
     |> String.split("\n", trim: true)
-    |> Enum.reduce(%{hostname: nil, sysctl: %{}, modules: [], bridges: %{}, boot: %{}}, fn
+    |> Enum.reduce(%{hostname: nil, sysctl: %{}, modules: [], bridges: %{}, wireguard: %{}, addresses: %{}, boot: %{}}, fn
       "hostname " <> name, acc -> %{acc | hostname: name}
       "sysctl " <> kv, acc ->
         [k, v] = String.split(kv, " ", parts: 2)
@@ -82,6 +91,16 @@ defmodule Sysbeam.Ltd.Config do
       "bridge " <> names, acc ->
         [b | ports] = String.split(names, " ", trim: true)
         put_in(acc, [:bridges, b], Enum.sort(ports))
+      "wireguard " <> rest, acc ->
+        [w, "port", port, "key", key] = String.split(rest, " ")
+        put_in(acc, [:wireguard, w], %{port: String.to_integer(port), key: key, peers: %{}})
+      "peer " <> rest, acc ->
+        [w, pub, "allowed", allowed, "endpoint", endpoint, "keepalive", keepalive] = String.split(rest, " ")
+        peer = %{allowed: Enum.sort(String.split(allowed, ",", trim: true)), endpoint: if(endpoint != "-", do: endpoint), keepalive: if(keepalive != "0", do: String.to_integer(keepalive))}
+        put_in(acc, [:wireguard, w, :peers, pub], peer)
+      "address " <> rest, acc ->
+        [l, cidr] = String.split(rest, " ")
+        update_in(acc, [:addresses, l], &Enum.sort([cidr | &1 || []]))
       "boot " <> kv, acc ->
         [k, v] = String.split(kv, " ", parts: 2)
         put_in(acc, [:boot, k], v)
@@ -177,6 +196,60 @@ defmodule Sysbeam.Ltd.Bridges do
   end
 end
 
+defmodule Sysbeam.Ltd.Wireguard do
+  @moduledoc """
+  wireguard devices as `%{name => %{port, key, peers}}`: the link exists with
+  kind wireguard; port and peers come from the device over generic netlink.
+  The private key lives in its own file, named by `key`; the kernel never
+  gives it back, so the path is kept from the declared view.
+  """
+  alias Sysbeam.Netlink.{Link, Wireguard}
+
+  def read(declared) do
+    {:ok, links} = Link.list()
+
+    for %{kind: "wireguard", name: w} <- links, {:ok, dev} <- [Wireguard.get(w)], into: %{} do
+      {w, %{port: dev.port, key: get_in(declared, [w, :key]), peers: dev.peers}}
+    end
+  end
+
+  def apply(desired) do
+    {:ok, links} = Link.list()
+    current = for %{kind: "wireguard", name: w} <- links, do: w
+    for w <- current -- Map.keys(desired), do: Link.delete(w)
+    for w <- Map.keys(desired) -- current, {:error, e} <- [Link.add(w, "wireguard")], do: Sysbeam.log("ltd", "wireguard #{w} not added (errno #{e})")
+
+    for {w, dev} <- desired, {:error, e} <- [Wireguard.set(w, String.trim(File.read!(dev.key)), dev.port, dev.peers)],
+        do: Sysbeam.log("ltd", "wireguard #{w} not configured (errno #{e})")
+
+    :ok
+  end
+end
+
+defmodule Sysbeam.Ltd.Addresses do
+  @moduledoc "IPv4 addresses per link, `%{link => [cidr]}`, every link but lo."
+  alias Sysbeam.Netlink.Link
+
+  def read do
+    {:ok, links} = Link.list()
+    {:ok, addrs} = Link.addresses()
+    for %{index: i, name: n} <- links, n != "lo", cidrs = addrs[i], into: %{}, do: {n, cidrs}
+  end
+
+  def apply(desired) do
+    current = read()
+    {:ok, links} = Link.list()
+    index = Map.new(links, &{&1.name, &1.index})
+
+    for l <- Enum.uniq(Map.keys(desired) ++ Map.keys(current)), i = index[l] do
+      for c <- (desired[l] || []) -- (current[l] || []), do: Link.add_address(i, c)
+      for c <- (current[l] || []) -- (desired[l] || []), do: Link.del_address(i, c)
+    end
+
+    :ok
+  end
+end
+
 defmodule Sysbeam.Ltd.Grubenv do
   @moduledoc """
   GRUB's environment block: a 1024-byte file, a signature line, `name=value`
@@ -209,19 +282,21 @@ defmodule Sysbeam.Ltd.Kernel do
   block for what the next boot gets. An unreadable block (no disk, no /boot)
   reads as the view's own boot state, so a diskless boot never drifts.
   """
-  alias Sysbeam.Ltd.{Bridges, Grubenv, Modules}
+  alias Sysbeam.Ltd.{Addresses, Bridges, Grubenv, Modules, Wireguard}
 
-  def read(%{sysctl: sysctl, boot: boot}) do
+  def read(%{sysctl: sysctl, wireguard: wireguard, boot: boot}) do
     %{
       hostname: get("kernel.hostname"),
       modules: Enum.sort(Modules.loaded()),
       bridges: Bridges.read(),
+      wireguard: Wireguard.read(wireguard),
+      addresses: Addresses.read(),
       sysctl: Map.new(sysctl, fn {k, _} -> {k, get(k)} end),
       boot: (case Grubenv.read() do {:ok, env} -> env; _ -> boot end)
     }
   end
 
-  def apply(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, boot: boot}) do
+  def apply(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, wireguard: wireguard, addresses: addresses, boot: boot}) do
     File.write!(proc("kernel.hostname"), hostname)
     for {k, v} <- sysctl, do: File.write!(proc(k), v)
 
@@ -229,6 +304,8 @@ defmodule Sysbeam.Ltd.Kernel do
     for m <- modules -- loaded, {:error, r} <- [Modules.load(m)], do: Sysbeam.log("ltd", "module #{m} not loaded (#{r})")
     for m <- loaded -- modules, {:error, r} <- [Modules.unload(m)], do: Sysbeam.log("ltd", "module #{m} not unloaded (#{r})")
     Bridges.apply(bridges)
+    Wireguard.apply(wireguard)
+    Addresses.apply(addresses)
 
     with {:error, reason} <- Grubenv.write(boot),
          do: Sysbeam.log("ltd", "bootloader state not written (#{reason})")
@@ -237,8 +314,19 @@ defmodule Sysbeam.Ltd.Kernel do
   end
 
   # A config ltd refuses to apply or write: bad hostname, or a sysctl this kernel lacks.
-  def validate(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, boot: boot}) do
+  def validate(%{hostname: hostname, sysctl: sysctl, modules: modules, bridges: bridges, wireguard: wireguard, addresses: addresses, boot: boot}) do
+    declared = Map.keys(bridges) ++ Map.keys(wireguard)
+
     cond do
+      link = Bridges.missing(Map.keys(addresses) -- declared) ->
+        {:error, "unknown link #{link}"}
+
+      missing = Enum.find_value(wireguard, fn {w, dev} -> not File.exists?(dev.key) and "#{w} key file #{dev.key}" end) ->
+        {:error, "missing #{missing}"}
+
+      bad = Enum.find_value(wireguard, fn {w, dev} -> Enum.find_value(dev.peers, fn {pub, _} -> match?(:error, Base.decode64(pub)) and "#{w} peer #{pub}" end) end) ->
+        {:error, "bad key for #{bad}"}
+
       port = Bridges.missing(List.flatten(Map.values(bridges))) ->
         {:error, "unknown link #{port}"}
 
@@ -296,7 +384,7 @@ defmodule Sysbeam.ConfigStore do
 
         {:error, reason} ->
           Sysbeam.log("ltd", "config refused (#{reason}); running with kernel state")
-          Kernel.read(%{sysctl: %{}, modules: [], bridges: %{}, boot: %{}})
+          Kernel.read(%{sysctl: %{}, modules: [], bridges: %{}, wireguard: %{}, addresses: %{}, boot: %{}})
       end
 
     Sysbeam.log("ltd", "running -- config reconciliation loop active")
@@ -366,6 +454,9 @@ defmodule Sysbeam.ConfigStore do
     |> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
     |> Map.merge(Map.new(v.modules, &{"module #{&1}", "loaded"}))
     |> Map.merge(Map.new(v.bridges, fn {b, ports} -> {"bridge #{b}", Enum.join(ports, ",")} end))
+    |> Map.merge(Map.new(v.addresses, fn {l, cidrs} -> {"address #{l}", Enum.join(cidrs, ",")} end))
+    |> Map.merge(Map.new(v.wireguard, fn {w, dev} -> {"wireguard #{w}", "port #{dev.port}"} end))
+    |> Map.merge(Map.new(for {w, dev} <- v.wireguard, {pub, p} <- dev.peers, do: {"peer #{w} #{pub}", inspect(p)}))
 |> Map.merge(Map.new(v.boot, fn {k, x} -> {"boot #{k}", x} end))
   end
 end

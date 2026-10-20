@@ -1,7 +1,8 @@
 #!/bin/sh
 # Boot the tinit disk image under QEMU (EFI firmware from the host's OVMF) on the serial console.
-# Ctrl-a x to quit. DISK overrides the image, since ltd writes grub's environment block on it.
+# Ctrl-a x to quit. DISK overrides the image, since ltd writes grub's environment block on it;
+# NETDEV overrides eth0's backend (the smoke test links two VMs with socket,listen / connect).
 IMG="$(dirname "$0")/buildroot/output/images"
 exec qemu-system-x86_64 -M pc -m 512 -nographic -no-reboot -bios /usr/share/ovmf/OVMF.fd \
     -drive file="${DISK:-$IMG/disk.img}",format=raw,if=virtio \
-    -netdev user,id=n0 -device virtio-net-pci,netdev=n0
+    -netdev "${NETDEV:-user}",id=n0 -device virtio-net-pci,netdev=n0
