@@ -80,7 +80,7 @@ console is worker 0's IEx on ttyS0.
 | No ungoverned busybox exec on the boot path | tinit execs sbexec, sbexec execs beam.smp; ltd mounts via NIF | done | smoke: `BEAMS=4` with no `/bin/sh` on the image |
 | Kernel usermode helpers under policy | `CONFIG_MODPROBE_PATH=""`; no uevent helper | done | `linux.fragment` |
 | busybox applets reachable only through a worker | none to reach | done | smoke host-side assertion |
-| Applet count on the image | 0 | done | smoke host-side assertion |
+| Applet count on the image | 0 | done | smoke host-side assertion; from-scratch `make build` 2026-10-19: no busybox, no libcap in rootfs.cpio |
 
 ## Tally
 

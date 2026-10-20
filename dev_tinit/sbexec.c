@@ -96,9 +96,8 @@ static void stdio_to(const char *in, const char *out)
 	int o = out ? open(out, O_WRONLY | O_NOCTTY) : i;
 	if (i < 0 || o < 0)
 		die(in);
-	dup2(i, 0);
-	dup2(o, 1);
-	dup2(o, 2);
+	if (dup2(i, 0) < 0 || dup2(o, 1) < 0 || dup2(o, 2) < 0)
+		die("dup2");
 	if (i > 2) close(i);
 	if (o > 2 && o != i) close(o);
 }

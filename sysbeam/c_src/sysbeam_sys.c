@@ -1,9 +1,10 @@
 /* Sysbeam.Sys: the handful of syscalls ltd needs that Erlang has no API for.
- * mount, umount, reboot. Strings arrive as binaries and are copied into fixed
+ * mount, umount, reboot, kill. Strings arrive as binaries and are copied into fixed
  * buffers; anything that does not fit is badarg, never truncated. */
 #include <erl_nif.h>
 #include <errno.h>
 #include <stdio.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
@@ -39,8 +40,8 @@ static ERL_NIF_TERM result(ErlNifEnv *env, int rc)
 static int get_str(ErlNifEnv *env, ERL_NIF_TERM t, char *buf, size_t n)
 {
 	ErlNifBinary b;
-	if (!enif_inspect_binary(env, t, &b) || b.size >= n)
-		return 0;
+	if (!enif_inspect_binary(env, t, &b) || b.size >= n || memchr(b.data, 0, b.size))
+		return 0; /* a NUL inside would silently shorten the path at the syscall */
 	memcpy(buf, b.data, b.size);
 	buf[b.size] = 0;
 	return 1;
@@ -82,10 +83,20 @@ static ERL_NIF_TERM reboot_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
 	return result(env, reboot(cmd));
 }
 
+static ERL_NIF_TERM kill_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	int pid, sig;
+	(void)argc;
+	if (!enif_get_int(env, argv[0], &pid) || pid <= 0 || !enif_get_int(env, argv[1], &sig))
+		return enif_make_badarg(env); /* pid <= 0 would signal a group or everyone */
+	return result(env, kill(pid, sig));
+}
+
 static ErlNifFunc funcs[] = {
 	{"mount", 5, mount_nif, 0},
 	{"umount", 1, umount_nif, 0},
 	{"reboot", 1, reboot_nif, 0},
+	{"kill", 2, kill_nif, 0},
 };
 
 ERL_NIF_INIT(Elixir.Sysbeam.Sys, funcs, NULL, NULL, NULL, NULL)

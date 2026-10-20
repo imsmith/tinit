@@ -1,6 +1,6 @@
 defmodule Sysbeam.Sys do
   @moduledoc """
-  mount(2), umount(2), reboot(2) as a NIF (c_src/sysbeam_sys.c), cross-compiled
+  mount(2), umount(2), reboot(2), kill(2) as a NIF (c_src/sysbeam_sys.c), cross-compiled
   by post-build.sh into this release's priv/. Target only: on the host the
   .so is absent, the module fails to load, and nothing calls it.
   """
@@ -24,4 +24,9 @@ defmodule Sysbeam.Sys do
 
   @doc "reboot(:poweroff | :restart | :halt). Does not return on success; needs CAP_SYS_BOOT."
   def reboot(_how), do: :erlang.nif_error(:not_loaded)
+
+  @sigterm 15
+  @doc "kill(pid, signal). pid must be > 0: no process groups, no broadcast."
+  def kill(_pid, _signal), do: :erlang.nif_error(:not_loaded)
+  def sigterm, do: @sigterm
 end
