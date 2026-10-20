@@ -37,7 +37,7 @@ tracks how far it still reaches.
 | sysctl | reconciled both ways | done | e977438, smoke: `FWD=0` |
 | Kernel params and modules | bridge, veth, wireguard built as modules; `module NAME` in system.tcl loaded with dependencies from modules.dep via finit_module, unloaded when dropped, hand-loaded modules adopted; unknown names refuse the file | done | `Sysbeam.Ltd.Modules`, `ltd_modules_test.exs`, smoke: `MODULES=bridge,udp_tunnel,wireguard`, `MODULES2=bridge` |
 | System clock | kernel sets it from CMOS at boot (x86 `read_persistent_clock`); no RTC driver, no userland | done | smoke: `CLOCK` within 300 s of host |
-| eBPF programs | | none | |
+| eBPF programs | bpf(2) in the NIF, `Sysbeam.Bpf` with hand-assembled programs (no compiler on the image); used by easysec: `worker N -net deny` attaches a cgroup egress drop program, enforced every tick. ltd itself declares no programs yet (XDP/tc on links would be the next use) | partial | `Sysbeam.Bpf`, `Easysec.Enforcer`; smoke: `NETDENY={:error, :eperm}` |
 | Internal bridges | `bridge NAME PORT...` in system.tcl; ltd builds and deletes bridges and moves ports over rtnetlink (raw netlink socket in the NIF, messages built in Elixir), reconciled both ways against the link dump; unknown ports refuse the file | done | `Sysbeam.Netlink`, `Sysbeam.Ltd.Bridges`, `netlink_test.exs`, smoke: `BRIDGE=["eth0"] UP=1`, `BRIDGE2=false,true MASTER=false` |
 | wireguard config and peer table | `wireguard NAME -port N -key FILE`, `peer DEV PUBKEY -allowed {...} [-endpoint H:P] [-keepalive N]`, `address LINK CIDR` in system.tcl; ltd sets the device over generic netlink and reads port, peers and addresses back every tick, so learned endpoints and hand-added addresses are adopted; private key in its own file; random pool seeded by virtio-rng (module) since wireguard drops handshakes until then | done | `Sysbeam.Netlink.Wireguard`, `Sysbeam.Ltd.Wireguard`, `Sysbeam.Ltd.Addresses`; smoke: second VM rewritten as the peer, `TUNNEL=hello from B` over TCP through the tunnel, `ENTROPY=256`, `WG2=false` |
 | Bootloader state | grub2 on the EFI partition; `boot cmdline {...}` in system.tcl is written to grub's environment block and read back, reconciled both ways; a diskless boot reads as no drift | done | `Sysbeam.Ltd.Grubenv`, `ltd_grubenv_test.exs`, smoke: `GRUBENV=true`, second boot `CMDLINE` |
@@ -62,7 +62,7 @@ tracks how far it still reaches.
 | Everything that runs comes through easysec | every worker does; kernel, tinit, ltd and easysec are the trusted base and are not governed by design | done | 8aa539b, decided 2026-10-20 |
 | Capabilities | bounding set dropped by sbexec via prctl before exec, no_new_privs | done | smoke: `CAPBND=0000000000401000`, `MOUNT={:error, :eperm}` |
 | cgroups | v2 leaf per worker, joined by sbexec before exec; pids controller only | partial | smoke: `PIDSMAX=128`, `FORKS_BLOCKED` |
-| SELinux | kernel has no LSM | none | |
+| SELinux | kernel LSM on; `/etc/easysec/policy.cil` compiled by secilc at build (built in post-build.sh against Buildroot's host libsepol), loaded and set enforcing by easysec before any worker starts; trusted base stays kernel_t; workers exec into `-context admin_t|worker_t` via sbexec -x and no_new_privs; enforcing put back if turned off | done | `Easysec.Selinux`, `policy.cil`; smoke: `SELINUX=1 CONTEXT=u:r:admin_t SETENFORCE={:error, :eacces}` |
 | Policy from a declarative store | `/etc/easysec/policy.tcl`, evaluated by tclsh; enforced on the cgroups every 2 s, drift reverted and logged; file changes apply live (pids_max) or by worker restart (caps, console) | done | `Easysec.Enforcer`, `easysec_policy_file_test.exs`, smoke: `PIDSMAX2`, `PIDSMAX3` |
 | Policy granularity below "process" (applet, syscall, device) | | none | |
 | Four supervision trees: devices, people, programs, networks | named placeholders | partial | `Sysbeam.Worker.Tree` |
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 27 |
-| partial | 5 |
-| none | 6 |
+| done | 28 |
+| partial | 6 |
+| none | 4 |
 | n/a | 1 |

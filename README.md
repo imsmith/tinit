@@ -8,7 +8,7 @@ each tier starting and supervising the next.
 tinit (PID 1)                       dev_tinit/tinit.c
   `-- sysbeam ltd                   mounts, then system config as a live materialized view
       (via /sbin/sbexec, dev_tinit/sbexec.c: beam.smp exec'd directly, no shell)
-        `-- sysbeam easysec         security policy (SELinux, cgroups, capabilities)
+        `-- sysbeam easysec         security policy (SELinux, cgroups, capabilities, eBPF)
               |-- sysbeam worker 0  supervision trees: devices, people, programs, networks
               `-- sysbeam worker 1
 ```
@@ -119,7 +119,8 @@ exit                  # worker 0 halts, easysec respawns it a second later
   block. `run_qemu.sh` boots it with the host's OVMF firmware.
 - `dev_tinit/post-build.sh`: compiles `tinit.c` with the Buildroot toolchain
   and installs it as `/sbin/init`, unzips the pinned Elixir 1.19.6 for OTP 26
-  into the host tree, and runs `mix release` into `/usr/lib/sysbeam`.
+  into the host tree, builds secilc and compiles `/etc/easysec/policy.cil`,
+  and runs `mix release` into `/usr/lib/sysbeam`.
 - `sysbeam/lib/sysbeam/`: `application.ex` picks children by role, `tier.ex`
   runs the next tier as a port and respawns it, `ltd.ex` holds the mounts, the
   Tcl config loader, the `/proc/sys`, kernel module and grub environment
