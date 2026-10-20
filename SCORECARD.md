@@ -25,7 +25,7 @@ tracks how far it still reaches.
 | Each tier runs and respawns the next | `Sysbeam.Tier` ports | done | smoke: `worker 0 exited 0, respawning` |
 | Dead parent takes its subtree with it | sbexec sets PR_SET_PDEATHSIG; erl_child_setup exits with its BEAM | done | `sbexec.c`, smoke: respawn |
 | No shell on the boot path | tinit execs sbexec, sbexec execs beam.smp; `/init` is a symlink to tinit | done | `sbexec_check.sh`, smoke |
-| Respawn that survives a crash loop | fixed 1 s backoff, no detection | partial | `tier.ex` ponytail note |
+| Respawn that survives a crash loop | delay doubles 1 s to 60 s while the child dies within 10 s of starting; resets after a healthy run | done | `Tier.next_backoff/2`, `tier_test.exs` |
 | Ships as a release on the image's OTP | mix release, `include_erts: false`, OTP 26 | done | a87f910, cb9cfca |
 
 ## ltd: boot sequence
@@ -86,6 +86,6 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 20 |
-| partial | 7 |
+| done | 21 |
+| partial | 6 |
 | none | 12 |
