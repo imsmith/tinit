@@ -39,7 +39,7 @@ tracks how far it still reaches.
 | System clock | kernel sets it from CMOS at boot (x86 `read_persistent_clock`); no RTC driver, no userland | done | smoke: `CLOCK` within 300 s of host |
 | eBPF programs | | none | |
 | Internal bridges | `bridge NAME PORT...` in system.tcl; ltd builds and deletes bridges and moves ports over rtnetlink (raw netlink socket in the NIF, messages built in Elixir), reconciled both ways against the link dump; unknown ports refuse the file | done | `Sysbeam.Netlink`, `Sysbeam.Ltd.Bridges`, `netlink_test.exs`, smoke: `BRIDGE=["eth0"] UP=1`, `BRIDGE2=false,true MASTER=false` |
-| wireguard config and peer table | | none | |
+| wireguard config and peer table | `wireguard NAME -port N -key FILE`, `peer DEV PUBKEY -allowed {...} [-endpoint H:P] [-keepalive N]`, `address LINK CIDR` in system.tcl; ltd sets the device over generic netlink and reads port, peers and addresses back every tick, so learned endpoints and hand-added addresses are adopted; private key in its own file; random pool seeded by virtio-rng (module) since wireguard drops handshakes until then | done | `Sysbeam.Netlink.Wireguard`, `Sysbeam.Ltd.Wireguard`, `Sysbeam.Ltd.Addresses`; smoke: second VM rewritten as the peer, `TUNNEL=hello from B` over TCP through the tunnel, `ENTROPY=256`, `WG2=false` |
 | Bootloader state | grub2 on the EFI partition; `boot cmdline {...}` in system.tcl is written to grub's environment block and read back, reconciled both ways; a diskless boot reads as no drift | done | `Sysbeam.Ltd.Grubenv`, `ltd_grubenv_test.exs`, smoke: `GRUBENV=true`, second boot `CMDLINE` |
 
 ## ltd: materialized view
@@ -86,7 +86,7 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 26 |
+| done | 27 |
 | partial | 5 |
-| none | 7 |
+| none | 6 |
 | n/a | 1 |

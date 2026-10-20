@@ -123,8 +123,8 @@ exit                  # worker 0 halts, easysec respawns it a second later
 - `sysbeam/lib/sysbeam/`: `application.ex` picks children by role, `tier.ex`
   runs the next tier as a port and respawns it, `ltd.ex` holds the mounts, the
   Tcl config loader, the `/proc/sys`, kernel module and grub environment
-  block and rtnetlink bridge adapters and the reconciler, `netlink.ex` builds
-  and parses rtnetlink messages, `easysec.ex`
+  block, rtnetlink bridge and address and generic-netlink wireguard adapters
+  and the reconciler, `netlink.ex` builds and parses netlink messages, `easysec.ex`
   and `worker.ex` are still placeholders.
 - `dev_tinit/sbexec.c`: the launcher every BEAM starts through. Parent-death
   signal, cgroup join, bounding-set drop, stdio (console or tty), then a direct
