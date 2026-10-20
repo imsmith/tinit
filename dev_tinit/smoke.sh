@@ -34,6 +34,17 @@ iex 'IO.puts("FILE=#{File.read!("/etc/ltd/system.tcl") =~ "hostname drifted"}")'
 iex 'File.write!("/etc/ltd/system.tcl", "hostname fromfile\nsysctl net.ipv4.ip_forward 0\n")'
 waitfor "config file changed, applied" 1
 iex 'IO.puts("FWD=" <> String.trim(File.read!("/proc/sys/net/ipv4/ip_forward")) <> " HOST=" <> String.trim(File.read!("/proc/sys/kernel/hostname")))'
+# easysec enforces policy on the cgroups: tampering is reverted and logged, never adopted
+iex 'File.write!("/sys/fs/cgroup/easysec/worker-0/pids.max", "999")'
+waitfor "violation: worker 0 pids.max 999 -> 128" 1
+iex 'IO.puts("PIDSMAX2=" <> String.trim(File.read!("/sys/fs/cgroup/easysec/worker-0/pids.max")))'
+# a policy file change applies: pids_max live, caps by restarting that worker
+iex 'File.write!("/etc/easysec/policy.tcl", "worker 0 -caps {net_admin sys_boot} -pids_max 256 -console /dev/ttyS0\nworker 1 -caps {sys_boot} -pids_max 64\n")'
+waitfor "policy file changed, applied: worker 0 pids_max, worker 1 restart" 1
+iex 'IO.puts("PIDSMAX3=" <> String.trim(File.read!("/sys/fs/cgroup/easysec/worker-0/pids.max")))'
+# a broken policy file is refused
+iex 'File.write!("/etc/easysec/policy.tcl", "worker 1 -caps {}\n")'
+waitfor "policy file changed but refused" 1
 # system clock: x86 arch code reads the CMOS at boot, no RTC driver or userland needed
 iex 'IO.puts("CLOCK=#{System.os_time(:second)}")'
 # a broken file is refused
@@ -48,6 +59,7 @@ grep -q "config reconciliation loop active" "$LOG" && grep -q "^BEAMS=4$" "$LOG"
   && grep -q "^CAPBND=0000000000401000$" "$LOG" && grep -q "^CGROUP=0::/easysec/worker-0 PIDSMAX=128$" "$LOG" \
   && grep -q "^MOUNT={:error, :eperm}$" "$LOG" && grep -q "^FORKS_BLOCKED=[1-9]" "$LOG" \
   && grep -q "^FILE=true$" "$LOG" && grep -q "^FWD=0 HOST=fromfile$" "$LOG" && grep -q "config file changed but refused" "$LOG" \
+  && grep -q "^PIDSMAX2=128$" "$LOG" && grep -q "^PIDSMAX3=256$" "$LOG" && grep -q "policy file changed but refused" "$LOG" \
   && grep -q "Power down" "$LOG" \
-  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, clock within ${SKEW}s of host, clean poweroff"; rm -f "$LOG"; } \
+  && { echo "PASS: chain up, 4 BEAMs, worker respawned, policy (caps, cgroup pids) enforced, ltd reconciled kernel->file, file->kernel, refused bad file, easysec reverted tampering, applied and refused policy files, clock within ${SKEW}s of host, clean poweroff"; rm -f "$LOG"; } \
   || { echo "FAIL"; cat "$LOG"; exit 1; }

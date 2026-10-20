@@ -9,9 +9,7 @@ defmodule Sysbeam.Application do
   a tier's subtree is a child of its supervisor like everything else.
   """
   use Application
-  alias Sysbeam.Easysec.{Cgroup, Policy}
-
-  @workers 2
+  alias Sysbeam.Easysec.{Enforcer, Policy}
 
   @impl true
   def start(_type, _args) do
@@ -31,17 +29,17 @@ defmodule Sysbeam.Application do
     ]
   end
 
+  # A refused policy starts no workers: a security policy with no valid declaration must not guess.
+  # The enforcer keeps watching the file, so a fixed file brings the workers up.
   defp children("easysec", _) do
-    for i <- 0..(@workers - 1), index = Integer.to_string(i) do
-      policy = Policy.for_worker(index)
-      cgroup = Cgroup.setup!("worker-#{index}", policy)
-      Sysbeam.log("easysec", "worker #{index} policy: caps #{inspect(policy.caps)}, pids.max #{policy.pids_max}")
+    policy =
+      case Policy.load() do
+        {:ok, policy} -> policy
+        {:error, reason} -> Sysbeam.log("easysec", "policy refused (#{reason}); no workers"); %{}
+      end
 
-      Supervisor.child_spec(
-        {Sysbeam.Tier, role: "worker", index: index, args: Policy.exec(policy, cgroup, ["worker", index])},
-        id: {:worker, i}
-      )
-    end
+    workers = for {index, worker} <- Enum.sort(policy), do: Enforcer.worker_spec(index, worker)
+    workers ++ [{Enforcer, policy}]
   end
 
   defp children("worker", _index) do

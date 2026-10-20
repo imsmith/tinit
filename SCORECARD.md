@@ -63,7 +63,7 @@ tracks how far it still reaches.
 | Capabilities | bounding set dropped by sbexec via prctl before exec, no_new_privs | done | smoke: `CAPBND=0000000000401000`, `MOUNT={:error, :eperm}` |
 | cgroups | v2 leaf per worker, joined by sbexec before exec; pids controller only | partial | smoke: `PIDSMAX=128`, `FORKS_BLOCKED` |
 | SELinux | kernel has no LSM | none | |
-| Policy from a declarative store | hardcoded in `Sysbeam.Easysec.Policy` | none | |
+| Policy from a declarative store | `/etc/easysec/policy.tcl`, evaluated by tclsh; enforced on the cgroups every 2 s, drift reverted and logged; file changes apply live (pids_max) or by worker restart (caps, console) | done | `Easysec.Enforcer`, `easysec_policy_file_test.exs`, smoke: `PIDSMAX2`, `PIDSMAX3` |
 | Policy granularity below "process" (applet, syscall, device) | | none | |
 | Four supervision trees: devices, people, programs, networks | named placeholders | partial | `Sysbeam.Worker.Tree` |
 | Cross-tree dependencies | | none | |
@@ -86,6 +86,6 @@ console is worker 0's IEx on ttyS0.
 
 | Status | Rows |
 | --- | --- |
-| done | 21 |
+| done | 22 |
 | partial | 6 |
-| none | 12 |
+| none | 11 |
